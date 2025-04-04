@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>ISO-Dateien</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+  <div class="container">
+    <a class="navbar-brand" href="#">💽 ISO-Dateien</a>
+  </div>
+</nav>
+
+<div class="container my-5 fade-in">
+  <h2 class="mb-4 text-center">Verfügbare ISO-Dateien</h2>
+
+  <table class="table table-hover table-bordered text-center align-middle">
+    <thead class="table-primary">
+      <tr>
+        <th>Dateiname</th>
+        <th>Größe</th>
+        <th>Download</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% files.forEach(file => { %>
+        <tr>
+          <td><%= file.name %></td>
+          <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+          <td>
+            <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
+          </td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+
+  <div class="text-end mt-3">
+    <a href="/admin-upload" class="btn btn-secondary btn-sm">🔒 Admin Upload</a>
+  </div>
+</div>
+
+</body>
+</html>
