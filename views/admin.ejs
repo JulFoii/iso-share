@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin: ISO Upload & Verwaltung</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .fade-in {
+      animation: fadeIn 0.4s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+  </style>
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+  <div class="container">
+    <a class="navbar-brand" href="/">⬅️ Zurück</a>
+    <div class="ms-auto">
+      <a href="/logout" class="btn btn-outline-light btn-sm">Logout</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container my-5 fade-in">
+  <div class="row justify-content-center">
+    <div class="col-md-8">
+      <!-- Upload Card -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h4 class="text-center mb-4">🔒 ISO-Datei hochladen</h4>
+          <form id="uploadForm" enctype="multipart/form-data">
+            <div class="mb-3">
+              <input type="file" class="form-control" name="file" id="fileInput" accept=".iso" required>
+            </div>
+            <div class="d-grid mb-3">
+              <button class="btn btn-primary" type="submit">🚀 Hochladen</button>
+            </div>
+            <div class="progress d-none" id="progressWrapper">
+              <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%;">0%</div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Dateiliste -->
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="text-center mb-3">🗂️ Hochgeladene Dateien</h5>
+          <table class="table table-bordered text-center align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Dateiname</th>
+                <th>Größe</th>
+                <th>Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% files.forEach(file => { %>
+                <tr>
+                  <td><%= file.name %></td>
+                  <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+                  <td>
+                    <button 
+                      class="btn btn-sm btn-danger" 
+                      data-bs-toggle="modal" 
+                      data-bs-target="#deleteModal" 
+                      data-filename="<%= file.name %>">
+                      🗑️ Löschen
+                    </button>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal zum Löschen -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="POST" action="/delete" class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">Datei löschen</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Bist du sicher, dass du die Datei <strong id="modalFilename">...</strong> löschen willst?</p>
+        <input type="hidden" name="filename" id="deleteFilename">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-danger">🗑️ Löschen</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // Modal Füllung
+  const deleteModal = document.getElementById('deleteModal');
+  deleteModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    const filename = button.getAttribute('data-filename');
+    document.getElementById('modalFilename').textContent = filename;
+    document.getElementById('deleteFilename').value = filename;
+  });
+
+  // Upload mit Fortschritt
+  document.getElementById('uploadForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    const progressWrapper = document.getElementById('progressWrapper');
+    const progressBar = document.getElementById('progressBar');
+
+    progressWrapper.classList.remove('d-none');
+    progressBar.style.width = '0%';
+    progressBar.textContent = '0%';
+
+    xhr.upload.addEventListener('progress', function (e) {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        progressBar.style.width = percent + '%';
+        progressBar.textContent = percent + '%';
+      }
+    });
+
+    xhr.open('POST', '/upload');
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        location.reload(); // neu laden nach Upload
+      } else {
+        alert('Upload fehlgeschlagen.');
+      }
+    };
+    xhr.send(formData);
+  });
+</script>
+
+</body>
+</html>
