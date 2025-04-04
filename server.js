@@ -6,7 +6,7 @@ const path = require('path');
 
 const app = express();
 const PORT = 3000;
-const PASSWORD = '12Julian@#OP90'; // 🔐 Hier dein Admin-Passwort
+const PASSWORD = 'PASSWORD'; // 🔐 Hier dein Admin-Passwort
 
 const upload = multer({ dest: 'uploads/' });
 
