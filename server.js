@@ -18,7 +18,7 @@ app.use(express.json());
 
 // Session-Konfiguration
 app.use(session({
-    secret: 'supersecretkey', // 🔐 Ändern für Produktion
+    secret: 'supersecretkey',
     resave: false,
     saveUninitialized: false
 }));
@@ -51,7 +51,7 @@ app.get('/download/:filename', (req, res) => {
     }
 });
 
-// Login-Seite
+// Login
 app.get('/login', (req, res) => {
     res.render('login', { error: null });
 });
@@ -66,7 +66,7 @@ app.post('/login', (req, res) => {
     }
 });
 
-// Admin Upload-Seite
+// Admin Upload-Ansicht
 app.get('/admin-upload', checkAuth, (req, res) => {
     const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
     const fileData = files.map(name => {
@@ -76,7 +76,7 @@ app.get('/admin-upload', checkAuth, (req, res) => {
     res.render('admin', { files: fileData });
 });
 
-// Upload-Handler
+// Upload
 app.post('/upload', checkAuth, upload.single('file'), (req, res) => {
     const file = req.file;
     if (!file.originalname.endsWith('.iso')) {
@@ -92,7 +92,6 @@ app.post('/upload', checkAuth, upload.single('file'), (req, res) => {
 app.post('/delete', checkAuth, (req, res) => {
     const { filename } = req.body;
     const filePath = path.join(__dirname, 'uploads', filename);
-
     if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
     }
@@ -106,7 +105,32 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// Start
+// 🔍 Suche User-Ansicht
+app.get('/search', (req, res) => {
+    const query = req.query.q?.toLowerCase() || '';
+    const files = fs.readdirSync('./uploads').filter(f =>
+        f.endsWith('.iso') && f.toLowerCase().includes(query)
+    );
+    const fileData = files.map(name => {
+        const size = fs.statSync(path.join('uploads', name)).size;
+        return { name, size };
+    });
+    res.render('index', { files: fileData, searchQuery: query });
+});
+
+// 🔍 Suche Admin-Ansicht
+app.get('/admin-search', checkAuth, (req, res) => {
+    const query = req.query.q?.toLowerCase() || '';
+    const files = fs.readdirSync('./uploads').filter(f =>
+        f.endsWith('.iso') && f.toLowerCase().includes(query)
+    );
+    const fileData = files.map(name => {
+        const size = fs.statSync(path.join('uploads', name)).size;
+        return { name, size };
+    });
+    res.render('admin', { files: fileData, searchQuery: query });
+});
+
 app.listen(PORT, () => {
     console.log(`🚀 Server läuft auf http://localhost:${PORT}`);
 });
