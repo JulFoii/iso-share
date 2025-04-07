@@ -29,6 +29,14 @@
       from { opacity: 0; transform: scale(0.95); }
       to { opacity: 1; transform: scale(1); }
     }
+    th.sortable {
+      cursor: pointer;
+    }
+    th.sortable:after {
+      content: ' ⇅';
+      font-size: 0.8em;
+      color: #666;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -76,8 +84,8 @@
             <table class="table table-bordered text-center align-middle" id="adminFilesTable">
               <thead class="table-light">
                 <tr>
-                  <th>Dateiname</th>
-                  <th>Größe</th>
+                  <th class="sortable" onclick="sortTable('adminFilesTable', 0, false, this)">Dateiname</th>
+                  <th class="sortable" onclick="sortTable('adminFilesTable', 1, true, this)">Größe</th>
                   <th>Aktion</th>
                 </tr>
               </thead>
@@ -85,7 +93,7 @@
                 <% files.forEach(file => { %>
                   <tr>
                     <td><%= file.name %></td>
-                    <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+                    <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
                     <td>
                       <button 
                         class="btn btn-sm btn-danger" 
@@ -133,10 +141,40 @@
   </div>
 </div>
 
-<!-- Scripts -->
+<!-- Skripte -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  // Echtzeit-Suche für Admin-Dateiliste
+  // Funktion zur Sortierung der Tabelle (wird in beiden Ansichten verwendet)
+  function sortTable(tableId, columnIndex, numeric, headerElement) {
+    const table = document.getElementById(tableId);
+    const tbody = table.tBodies[0];
+    const rowsArray = Array.from(tbody.querySelectorAll("tr"));
+    
+    let currentOrder = headerElement.getAttribute("data-order") || "asc";
+    let newOrder = currentOrder === "asc" ? "desc" : "asc";
+    headerElement.setAttribute("data-order", newOrder);
+    
+    rowsArray.sort((a, b) => {
+      let cellA = a.cells[columnIndex].textContent.trim();
+      let cellB = b.cells[columnIndex].textContent.trim();
+      
+      if (numeric) {
+        cellA = parseFloat(a.cells[columnIndex].getAttribute("data-size"));
+        cellB = parseFloat(b.cells[columnIndex].getAttribute("data-size"));
+      } else {
+        cellA = cellA.toLowerCase();
+        cellB = cellB.toLowerCase();
+      }
+      
+      if (cellA < cellB) return newOrder === "asc" ? -1 : 1;
+      if (cellA > cellB) return newOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+    
+    rowsArray.forEach(row => tbody.appendChild(row));
+  }
+
+  // Echtzeit-Suche für Admin
   document.getElementById('adminSearchInput').addEventListener('input', function() {
     const query = this.value.toLowerCase();
     const rows = document.querySelectorAll('#adminFilesTable tbody tr');

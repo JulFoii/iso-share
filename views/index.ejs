@@ -22,6 +22,14 @@
       text-align: center;
       padding: 10px 0;
     }
+    th.sortable {
+      cursor: pointer;
+    }
+    th.sortable:after {
+      content: ' ⇅';
+      font-size: 0.8em;
+      color: #666;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -44,8 +52,8 @@
     <table class="table table-hover table-bordered text-center align-middle" id="filesTable">
       <thead class="table-primary">
         <tr>
-          <th>Dateiname</th>
-          <th>Größe</th>
+          <th class="sortable" onclick="sortTable('filesTable', 0, false, this)">Dateiname</th>
+          <th class="sortable" onclick="sortTable('filesTable', 1, true, this)">Größe</th>
           <th>Download</th>
         </tr>
       </thead>
@@ -53,7 +61,7 @@
         <% files.forEach(file => { %>
           <tr>
             <td><%= file.name %></td>
-            <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+            <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
             <td>
               <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
             </td>
@@ -74,8 +82,42 @@
   </footer>
 </div>
 
-<!-- Real-Time Search Script -->
+<!-- Sortier- und Echtzeit-Suche-Skript -->
 <script>
+  // Funktion zur Sortierung der Tabelle
+  function sortTable(tableId, columnIndex, numeric, headerElement) {
+    const table = document.getElementById(tableId);
+    const tbody = table.tBodies[0];
+    const rowsArray = Array.from(tbody.querySelectorAll("tr"));
+    
+    // Bestimme aktuellen Sortiermodus (asc oder desc) und togglen ihn
+    let currentOrder = headerElement.getAttribute("data-order") || "asc";
+    let newOrder = currentOrder === "asc" ? "desc" : "asc";
+    headerElement.setAttribute("data-order", newOrder);
+    
+    rowsArray.sort((a, b) => {
+      let cellA = a.cells[columnIndex].textContent.trim();
+      let cellB = b.cells[columnIndex].textContent.trim();
+      
+      if (numeric) {
+        // Verwende den in data-size gespeicherten Wert
+        cellA = parseFloat(a.cells[columnIndex].getAttribute("data-size"));
+        cellB = parseFloat(b.cells[columnIndex].getAttribute("data-size"));
+      } else {
+        cellA = cellA.toLowerCase();
+        cellB = cellB.toLowerCase();
+      }
+      
+      if (cellA < cellB) return newOrder === "asc" ? -1 : 1;
+      if (cellA > cellB) return newOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+    
+    // Tabelle neu aufbauen
+    rowsArray.forEach(row => tbody.appendChild(row));
+  }
+
+  // Echtzeit-Suche
   document.getElementById('searchInput').addEventListener('input', function() {
     const query = this.value.toLowerCase();
     const rows = document.querySelectorAll('#filesTable tbody tr');
