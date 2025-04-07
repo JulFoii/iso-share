@@ -2,12 +2,14 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <title>Admin: ISO Upload & Verwaltung</title>
+  <title>Admin: ISO Upload & Verwaltung | ISO Share</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     html, body {
       height: 100%;
+      background: #f0f2f5;
     }
     .wrapper {
       display: flex;
@@ -18,9 +20,10 @@
       flex: 1;
     }
     .footer {
-      background-color: #f8f9fa;
+      background-color: #343a40;
+      color: #fff;
       text-align: center;
-      padding: 10px 0;
+      padding: 15px 0;
     }
     .fade-in {
       animation: fadeIn 0.4s ease-in-out;
@@ -29,87 +32,82 @@
       from { opacity: 0; transform: scale(0.95); }
       to { opacity: 1; transform: scale(1); }
     }
-    th.sortable {
+    .table th.sortable {
       cursor: pointer;
     }
-    th.sortable:after {
+    .table th.sortable:after {
       content: ' ⇅';
       font-size: 0.8em;
       color: #666;
     }
   </style>
 </head>
-<body class="bg-light">
+<body>
 <div class="wrapper">
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
     <div class="container">
-      <a class="navbar-brand" href="/">⬅️ Zurück</a>
+      <a class="navbar-brand" href="/">ISO Share</a>
       <div class="ms-auto">
-        <a href="/logout" class="btn btn-outline-light btn-sm">Logout</a>
+        <a href="/logout" class="btn btn-outline-light btn-lg">Logout</a>
       </div>
     </div>
   </nav>
 
+  <header class="bg-light py-4">
+    <div class="container">
+      <h2 class="mb-0">Admin: ISO Upload & Verwaltung</h2>
+    </div>
+  </header>
+
   <div class="content container my-5 fade-in">
-    <div class="row justify-content-center">
-      <div class="col-md-8">
+    <div class="row mb-4">
+      <div class="col-md-6 offset-md-3">
+        <input type="text" id="adminSearchInput" class="form-control form-control-lg" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+      </div>
+    </div>
 
-        <!-- Echtzeit-Suche -->
-        <div class="d-flex justify-content-center mb-4">
-          <input type="text" id="adminSearchInput" class="form-control w-50" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
-        </div>
-
-        <!-- Upload Card -->
-        <div class="card shadow-sm mb-4">
-          <div class="card-body">
-            <h4 class="text-center mb-4">🔒 ISO-Datei hochladen</h4>
-            <form id="uploadForm" enctype="multipart/form-data">
-              <div class="mb-3">
-                <input type="file" class="form-control" name="file" id="fileInput" accept=".iso" required>
-              </div>
-              <div class="d-grid mb-3">
-                <button class="btn btn-primary" type="submit">🚀 Hochladen</button>
-              </div>
-              <div class="progress d-none" id="progressWrapper">
-                <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%;">0%</div>
-              </div>
-            </form>
+    <!-- Upload Card -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h4 class="text-center mb-4">ISO-Datei hochladen</h4>
+        <form id="uploadForm" enctype="multipart/form-data">
+          <div class="mb-3">
+            <input type="file" class="form-control" name="file" id="fileInput" accept=".iso" required>
           </div>
-        </div>
-
-        <!-- Dateiliste -->
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h5 class="text-center mb-3">🗂️ Hochgeladene Dateien</h5>
-            <table class="table table-bordered text-center align-middle" id="adminFilesTable">
-              <thead class="table-light">
-                <tr>
-                  <th class="sortable" onclick="sortTable('adminFilesTable', 0, false, this)">Dateiname</th>
-                  <th class="sortable" onclick="sortTable('adminFilesTable', 1, true, this)">Größe</th>
-                  <th>Aktion</th>
-                </tr>
-              </thead>
-              <tbody>
-                <% files.forEach(file => { %>
-                  <tr>
-                    <td><%= file.name %></td>
-                    <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
-                    <td>
-                      <button 
-                        class="btn btn-sm btn-danger" 
-                        data-bs-toggle="modal" 
-                        data-bs-target="#deleteModal" 
-                        data-filename="<%= file.name %>">
-                        🗑️ Löschen
-                      </button>
-                    </td>
-                  </tr>
-                <% }); %>
-              </tbody>
-            </table>
+          <div class="d-grid mb-3">
+            <button class="btn btn-primary btn-lg" type="submit">Upload</button>
           </div>
-        </div>
+          <div class="progress d-none" id="progressWrapper">
+            <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%;">0%</div>
+          </div>
+        </form>
+      </div>
+    </div>
 
+    <!-- Dateiliste -->
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="text-center mb-3">Hochgeladene Dateien</h5>
+        <table class="table table-striped table-hover table-bordered text-center align-middle" id="adminFilesTable">
+          <thead class="table-light">
+            <tr>
+              <th class="sortable" onclick="sortTable('adminFilesTable', 0, false, this)">Dateiname</th>
+              <th class="sortable" onclick="sortTable('adminFilesTable', 1, true, this)">Größe</th>
+              <th>Aktion</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% files.forEach(file => { %>
+              <tr>
+                <td><%= file.name %></td>
+                <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+                <td>
+                  <button class="btn btn-danger btn-lg" data-bs-toggle="modal" data-bs-target="#deleteModal" data-filename="<%= file.name %>">Löschen</button>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -121,7 +119,7 @@
   </footer>
 </div>
 
-<!-- Modal zum Löschen -->
+<!-- Modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <form method="POST" action="/delete" class="modal-content">
@@ -130,21 +128,18 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <p>Bist du sicher, dass du die Datei <strong id="modalFilename">...</strong> löschen willst?</p>
+        <p>Bist du sicher, dass du die Datei <strong id="modalFilename">...</strong> löschen möchtest?</p>
         <input type="hidden" name="filename" id="deleteFilename">
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
-        <button type="submit" class="btn btn-danger">🗑️ Löschen</button>
+        <button type="submit" class="btn btn-danger">Löschen</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Skripte -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  // Funktion zur Sortierung der Tabelle (wird in beiden Ansichten verwendet)
   function sortTable(tableId, columnIndex, numeric, headerElement) {
     const table = document.getElementById(tableId);
     const tbody = table.tBodies[0];
@@ -174,7 +169,6 @@
     rowsArray.forEach(row => tbody.appendChild(row));
   }
 
-  // Echtzeit-Suche für Admin
   document.getElementById('adminSearchInput').addEventListener('input', function() {
     const query = this.value.toLowerCase();
     const rows = document.querySelectorAll('#adminFilesTable tbody tr');
@@ -184,7 +178,6 @@
     });
   });
 
-  // Modal vorbereiten
   const deleteModal = document.getElementById('deleteModal');
   deleteModal.addEventListener('show.bs.modal', function (event) {
     const button = event.relatedTarget;
@@ -193,23 +186,18 @@
     document.getElementById('deleteFilename').value = filename;
   });
 
-  // Upload mit Fortschrittsbalken
   document.getElementById('uploadForm').addEventListener('submit', function (e) {
     e.preventDefault();
-
     const fileInput = document.getElementById('fileInput');
     const file = fileInput.files[0];
     const formData = new FormData();
     formData.append('file', file);
-
     const xhr = new XMLHttpRequest();
     const progressWrapper = document.getElementById('progressWrapper');
     const progressBar = document.getElementById('progressBar');
-
     progressWrapper.classList.remove('d-none');
     progressBar.style.width = '0%';
     progressBar.textContent = '0%';
-
     xhr.upload.addEventListener('progress', function (e) {
       if (e.lengthComputable) {
         const percent = Math.round((e.loaded / e.total) * 100);
@@ -217,7 +205,6 @@
         progressBar.textContent = percent + '%';
       }
     });
-
     xhr.open('POST', '/upload');
     xhr.onload = function () {
       if (xhr.status === 200) {
@@ -229,6 +216,6 @@
     xhr.send(formData);
   });
 </script>
-
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

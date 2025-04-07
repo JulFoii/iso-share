@@ -2,12 +2,14 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <title>ISO-Dateien</title>
+  <title>ISO-Dateien | ISO Share</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     html, body {
       height: 100%;
+      background: #f0f2f5;
     }
     .wrapper {
       display: flex;
@@ -18,60 +20,82 @@
       flex: 1;
     }
     .footer {
-      background-color: #f8f9fa;
+      background-color: #343a40;
+      color: #fff;
       text-align: center;
-      padding: 10px 0;
+      padding: 15px 0;
     }
-    th.sortable {
+    .hero {
+      background: linear-gradient(135deg, #007bff, #00d4ff);
+      color: white;
+      padding: 50px 0;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 3rem;
+      font-weight: bold;
+    }
+    .table th.sortable {
       cursor: pointer;
     }
-    th.sortable:after {
+    .table th.sortable:after {
       content: ' ⇅';
       font-size: 0.8em;
       color: #666;
     }
   </style>
 </head>
-<body class="bg-light">
+<body>
 <div class="wrapper">
-  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
     <div class="container">
-      <a class="navbar-brand" href="#">💽 ISO-Dateien</a>
+      <a class="navbar-brand" href="#">ISO Share</a>
     </div>
   </nav>
 
-  <div class="content container my-5 fade-in">
-    <h2 class="mb-4 text-center">Verfügbare ISO-Dateien</h2>
+  <header class="hero">
+    <div class="container">
+      <h1>ISO Dateien</h1>
+      <p class="lead">Teile und lade ISO-Dateien einfach und sicher hoch.</p>
+    </div>
+  </header>
 
+  <div class="content container my-5">
     <!-- Echtzeit-Suche -->
-    <div class="d-flex justify-content-center mb-4">
-      <input type="text" id="searchInput" class="form-control w-50" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+    <div class="row mb-4">
+      <div class="col-md-6 offset-md-3">
+        <input type="text" id="searchInput" class="form-control form-control-lg" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+      </div>
     </div>
 
     <!-- Tabelle -->
-    <table class="table table-hover table-bordered text-center align-middle" id="filesTable">
-      <thead class="table-primary">
-        <tr>
-          <th class="sortable" onclick="sortTable('filesTable', 0, false, this)">Dateiname</th>
-          <th class="sortable" onclick="sortTable('filesTable', 1, true, this)">Größe</th>
-          <th>Download</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% files.forEach(file => { %>
-          <tr>
-            <td><%= file.name %></td>
-            <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
-            <td>
-              <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
-            </td>
-          </tr>
-        <% }); %>
-      </tbody>
-    </table>
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <table class="table table-striped table-hover table-bordered text-center align-middle" id="filesTable">
+          <thead class="table-primary">
+            <tr>
+              <th class="sortable" onclick="sortTable('filesTable', 0, false, this)">Dateiname</th>
+              <th class="sortable" onclick="sortTable('filesTable', 1, true, this)">Größe</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% files.forEach(file => { %>
+              <tr>
+                <td><%= file.name %></td>
+                <td data-size="<%= file.size %>"><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+                <td>
+                  <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-    <div class="text-end mt-3">
-      <a href="/admin-upload" class="btn btn-secondary btn-sm">🔒 Admin Upload</a>
+    <div class="mt-3 text-end">
+      <a href="/admin-upload" class="btn btn-secondary btn-lg">🔒 Admin Upload</a>
     </div>
   </div>
 
@@ -84,13 +108,11 @@
 
 <!-- Sortier- und Echtzeit-Suche-Skript -->
 <script>
-  // Funktion zur Sortierung der Tabelle
   function sortTable(tableId, columnIndex, numeric, headerElement) {
     const table = document.getElementById(tableId);
     const tbody = table.tBodies[0];
     const rowsArray = Array.from(tbody.querySelectorAll("tr"));
     
-    // Bestimme aktuellen Sortiermodus (asc oder desc) und togglen ihn
     let currentOrder = headerElement.getAttribute("data-order") || "asc";
     let newOrder = currentOrder === "asc" ? "desc" : "asc";
     headerElement.setAttribute("data-order", newOrder);
@@ -100,7 +122,6 @@
       let cellB = b.cells[columnIndex].textContent.trim();
       
       if (numeric) {
-        // Verwende den in data-size gespeicherten Wert
         cellA = parseFloat(a.cells[columnIndex].getAttribute("data-size"));
         cellB = parseFloat(b.cells[columnIndex].getAttribute("data-size"));
       } else {
@@ -113,11 +134,9 @@
       return 0;
     });
     
-    // Tabelle neu aufbauen
     rowsArray.forEach(row => tbody.appendChild(row));
   }
 
-  // Echtzeit-Suche
   document.getElementById('searchInput').addEventListener('input', function() {
     const query = this.value.toLowerCase();
     const rows = document.querySelectorAll('#filesTable tbody tr');
@@ -127,6 +146,7 @@
     });
   });
 </script>
-
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
