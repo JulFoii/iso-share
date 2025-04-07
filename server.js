@@ -31,7 +31,7 @@ function checkAuth(req, res, next) {
     res.redirect('/login');
 }
 
-// Startseite
+// Startseite (User-Ansicht)
 app.get('/', (req, res) => {
     const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
     const fileData = files.map(name => {
@@ -105,7 +105,7 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// 🔍 Suche User-Ansicht
+// 🔍 Suche in der User-Ansicht
 app.get('/search', (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
     const files = fs.readdirSync('./uploads').filter(f =>
@@ -118,7 +118,7 @@ app.get('/search', (req, res) => {
     res.render('index', { files: fileData, searchQuery: query });
 });
 
-// 🔍 Suche Admin-Ansicht
+// 🔍 Suche in der Admin-Ansicht
 app.get('/admin-search', checkAuth, (req, res) => {
     const query = req.query.q?.toLowerCase() || '';
     const files = fs.readdirSync('./uploads').filter(f =>

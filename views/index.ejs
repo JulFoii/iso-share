@@ -5,50 +5,86 @@
   <title>ISO-Dateien</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%;
+    }
+    .wrapper {
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+    .content {
+      flex: 1;
+    }
+    .footer {
+      background-color: #f8f9fa;
+      text-align: center;
+      padding: 10px 0;
+    }
+  </style>
 </head>
 <body class="bg-light">
+<div class="wrapper">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container">
+      <a class="navbar-brand" href="#">💽 ISO-Dateien</a>
+    </div>
+  </nav>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-  <div class="container">
-    <a class="navbar-brand" href="#">💽 ISO-Dateien</a>
-  </div>
-</nav>
+  <div class="content container my-5 fade-in">
+    <h2 class="mb-4 text-center">Verfügbare ISO-Dateien</h2>
 
-<div class="container my-5 fade-in">
-  <h2 class="mb-4 text-center">Verfügbare ISO-Dateien</h2>
+    <!-- Echtzeit-Suche -->
+    <div class="d-flex justify-content-center mb-4">
+      <input type="text" id="searchInput" class="form-control w-50" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+    </div>
 
-  <!-- Suchleiste -->
-  <form action="/search" method="GET" class="d-flex justify-content-center mb-4">
-    <input type="text" name="q" class="form-control w-50 me-2" placeholder="🔍 Nach Dateiname suchen..." value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
-    <button type="submit" class="btn btn-outline-primary">Suchen</button>
-  </form>
-
-  <!-- Tabelle -->
-  <table class="table table-hover table-bordered text-center align-middle">
-    <thead class="table-primary">
-      <tr>
-        <th>Dateiname</th>
-        <th>Größe</th>
-        <th>Download</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% files.forEach(file => { %>
+    <!-- Tabelle -->
+    <table class="table table-hover table-bordered text-center align-middle" id="filesTable">
+      <thead class="table-primary">
         <tr>
-          <td><%= file.name %></td>
-          <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
-          <td>
-            <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
-          </td>
+          <th>Dateiname</th>
+          <th>Größe</th>
+          <th>Download</th>
         </tr>
-      <% }); %>
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        <% files.forEach(file => { %>
+          <tr>
+            <td><%= file.name %></td>
+            <td><%= (file.size / 1024 / 1024).toFixed(2) %> MB</td>
+            <td>
+              <a href="/download/<%= file.name %>" class="btn btn-outline-primary btn-sm">⬇️ Download</a>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
 
-  <div class="text-end mt-3">
-    <a href="/admin-upload" class="btn btn-secondary btn-sm">🔒 Admin Upload</a>
+    <div class="text-end mt-3">
+      <a href="/admin-upload" class="btn btn-secondary btn-sm">🔒 Admin Upload</a>
+    </div>
   </div>
+
+  <footer class="footer">
+    <div class="container">
+      <p class="mb-0">© 2025 ISO Share. Alle Rechte vorbehalten.</p>
+    </div>
+  </footer>
 </div>
+
+<!-- Real-Time Search Script -->
+<script>
+  document.getElementById('searchInput').addEventListener('input', function() {
+    const query = this.value.toLowerCase();
+    const rows = document.querySelectorAll('#filesTable tbody tr');
+    rows.forEach(row => {
+      const filename = row.querySelector('td').textContent.toLowerCase();
+      row.style.display = filename.includes(query) ? '' : 'none';
+    });
+  });
+</script>
 
 </body>
 </html>
