@@ -51,13 +51,14 @@
 1. **Repository klonen:**
 
    git clone https://github.com/JulFoii/iso-share.git
+
    cd iso-share
 
-2. **Abhängigkeiten installieren**
+3. **Abhängigkeiten installieren**
 
    npm install
 
-3. **Uploads-Ordner ignorieren**
+4. **Uploads-Ordner ignorieren**
 
   Stelle sicher, dass der uploads-Ordner in der .gitignore eingetragen ist
 
