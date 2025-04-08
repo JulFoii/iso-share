@@ -24,7 +24,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: julfoii
           password: ${{ secrets.CR_PAT }}
 
       - name: Build and push Docker image
@@ -32,4 +32,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/JulFoii/iso-share:latest
+          tags: ghcr.io/julfoii/iso-share:latest
