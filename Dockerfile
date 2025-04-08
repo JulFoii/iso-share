@@ -1,4 +1,4 @@
-# Basisimage wählen (zum Beispiel eine Node.js-Version)
+# Basisimage wählen
 FROM node:16-alpine
 
 # Arbeitsverzeichnis festlegen
@@ -13,8 +13,8 @@ RUN npm install
 # Restlichen Code kopieren
 COPY . .
 
-# Falls Dein Projekt einen Build-Schritt hat (z.B. "npm run build"), diesen ausführen
-RUN npm run build
+# Falls kein Build-Schritt erforderlich ist, entferne oder kommentiere den folgenden Befehl:
+# RUN npm run build
 
 # Exponierten Port deklarieren (anpassen, falls nötig)
 EXPOSE 3000
