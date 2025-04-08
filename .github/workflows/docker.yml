@@ -32,4 +32,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}/iso-share:latest
+          tags: ghcr.io/julfoii/iso-share:latest
