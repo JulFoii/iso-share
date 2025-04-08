@@ -1,18 +1,23 @@
-# Verwende ein leichtgewichtiges Node-Image (Alpine)
+# Basisimage wählen (zum Beispiel eine Node.js-Version)
 FROM node:16-alpine
 
-# Setze das Arbeitsverzeichnis im Container
+# Arbeitsverzeichnis festlegen
 WORKDIR /app
 
-# Kopiere die Package-Dateien und installiere die Abhängigkeiten
+# Nur die für die Installation benötigten Dateien kopieren
 COPY package*.json ./
-RUN npm install --production
 
-# Kopiere den Rest des Quellcodes
+# Abhängigkeiten installieren
+RUN npm install
+
+# Restlichen Code kopieren
 COPY . .
 
-# Öffne den Port, auf dem der Server laufen wird
+# Falls Dein Projekt einen Build-Schritt hat (z.B. "npm run build"), diesen ausführen
+RUN npm run build
+
+# Exponierten Port deklarieren (anpassen, falls nötig)
 EXPOSE 3000
 
-# Starte die Anwendung
-CMD ["node", "server.js"]
+# Startbefehl für die Anwendung
+CMD ["npm", "start"]
