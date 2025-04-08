@@ -27,7 +27,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: ${{ github.actor }
+          username: julfoii
           # Verwende ein persönliches Zugriffstoken (PAT) als Secret (z.B. CR_PAT)
           password: ${{ secrets.CR_PAT }}
 
@@ -37,4 +37,5 @@ jobs:
         with:
           context: .
           push: true
+          # Verwende ein festes Tag-Format, damit das Image unter ghcr.io/<OWNER>/iso-share:latest veröffentlicht wird.
           tags: ghcr.io/julfoii/iso-share:latest
