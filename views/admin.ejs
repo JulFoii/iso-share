@@ -49,6 +49,36 @@
       font-size: 0.8em;
       color: #666;
     }
+    .drag-drop-zone {
+      border: 2px dashed #007bff;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      background-color: #f8f9fa;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    .drag-drop-zone.dragover {
+      border-color: #0056b3;
+      background-color: #e3f2fd;
+      transform: scale(1.02);
+    }
+    .drag-drop-zone:hover {
+      border-color: #0056b3;
+      background-color: #e3f2fd;
+    }
+    .drag-drop-zone .upload-icon {
+      font-size: 3rem;
+      color: #007bff;
+      margin-bottom: 1rem;
+    }
+    .drag-drop-zone.dragover .upload-icon {
+      animation: bounce 0.6s infinite alternate;
+    }
+    @keyframes bounce {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(-10px); }
+    }
   </style>
 </head>
 <body>
@@ -80,11 +110,25 @@
       <div class="card-body">
         <h4 class="text-center mb-4">ISO-Datei hochladen</h4>
         <form id="uploadForm" enctype="multipart/form-data">
-          <div class="mb-3">
-            <input type="file" class="form-control" name="file" id="fileInput" accept=".iso" required>
+          <!-- Drag and Drop Zone -->
+          <div class="drag-drop-zone mb-3" id="dragDropZone">
+            <div class="upload-icon">📁</div>
+            <h5>Drag & Drop ISO files here</h5>
+            <p class="text-muted mb-3">or click to browse files</p>
+            <span class="btn btn-outline-primary">Choose Files</span>
           </div>
+          
+          <!-- Hidden File Input -->
+          <input type="file" class="d-none" name="file" id="fileInput" accept=".iso" required>
+          
+          <!-- Selected File Display -->
+          <div id="selectedFile" class="alert alert-info d-none mb-3">
+            <strong>Selected file:</strong> <span id="fileName"></span>
+            <span class="badge bg-secondary ms-2" id="fileSize"></span>
+          </div>
+          
           <div class="d-grid mb-3">
-            <button class="btn btn-primary btn-lg" type="submit">Upload</button>
+            <button class="btn btn-primary btn-lg" type="submit" id="uploadBtn" disabled>Upload</button>
           </div>
           <div class="progress d-none" id="progressWrapper">
             <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%;">0%</div>
@@ -199,18 +243,89 @@
     document.getElementById('deleteFilename').value = filename;
   });
 
+  // Drag and Drop functionality
+  const dragDropZone = document.getElementById('dragDropZone');
+  const fileInput = document.getElementById('fileInput');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const selectedFileDiv = document.getElementById('selectedFile');
+  const fileName = document.getElementById('fileName');
+  const fileSize = document.getElementById('fileSize');
+
+  // Click to browse files
+  dragDropZone.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  // File input change handler
+  fileInput.addEventListener('change', handleFileSelect);
+
+  // Drag and drop event handlers
+  dragDropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dragDropZone.classList.add('dragover');
+  });
+
+  dragDropZone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    if (!dragDropZone.contains(e.relatedTarget)) {
+      dragDropZone.classList.remove('dragover');
+    }
+  });
+
+  dragDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragDropZone.classList.remove('dragover');
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      if (file.name.toLowerCase().endsWith('.iso')) {
+        fileInput.files = files;
+        handleFileSelect();
+      } else {
+        alert('Only .iso files are allowed!');
+      }
+    }
+  });
+
+  function handleFileSelect() {
+    const file = fileInput.files[0];
+    if (file) {
+      fileName.textContent = file.name;
+      fileSize.textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+      selectedFileDiv.classList.remove('d-none');
+      uploadBtn.disabled = false;
+    }
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   document.getElementById('uploadForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    const fileInput = document.getElementById('fileInput');
     const file = fileInput.files[0];
+    if (!file) {
+      alert('Please select a file first.');
+      return;
+    }
+    
     const formData = new FormData();
     formData.append('file', file);
     const xhr = new XMLHttpRequest();
     const progressWrapper = document.getElementById('progressWrapper');
     const progressBar = document.getElementById('progressBar');
+    
     progressWrapper.classList.remove('d-none');
     progressBar.style.width = '0%';
     progressBar.textContent = '0%';
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading...';
+    
     xhr.upload.addEventListener('progress', function (e) {
       if (e.lengthComputable) {
         const percent = Math.round((e.loaded / e.total) * 100);
@@ -218,14 +333,26 @@
         progressBar.textContent = percent + '%';
       }
     });
+    
     xhr.open('POST', '/upload');
     xhr.onload = function () {
       if (xhr.status === 200) {
         location.reload();
       } else {
-        alert('Upload fehlgeschlagen.');
+        alert('Upload failed.');
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload';
+        progressWrapper.classList.add('d-none');
       }
     };
+    
+    xhr.onerror = function () {
+      alert('Upload failed.');
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload';
+      progressWrapper.classList.add('d-none');
+    };
+    
     xhr.send(formData);
   });
 </script>
