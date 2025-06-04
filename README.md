@@ -43,29 +43,66 @@
 
 ### Voraussetzungen
 
-- **[Node.js](https://nodejs.org/)** (v14 oder höher)
-- **npm** (wird mit Node.js installiert)
+- **[Node.js](https://nodejs.org/)** (v14 oder höher) und **npm** ODER
+- **[Docker](https://www.docker.com/)** und **Docker Compose**
 
 ### Setup
 
+#### Option 1: Standard Installation
+
 1. **Repository klonen:**
 
+   ```bash
    git clone https://github.com/JulFoii/iso-share.git
-
    cd iso-share
+   ```
 
-3. **Abhängigkeiten installieren**
+2. **Abhängigkeiten installieren:**
 
+   ```bash
    npm install
+   ```
 
-4. **Uploads-Ordner ignorieren**
+3. **Uploads-Ordner ignorieren:**
 
-  Stelle sicher, dass der uploads-Ordner in der .gitignore eingetragen ist
+   Stelle sicher, dass der uploads-Ordner in der .gitignore eingetragen ist
 
-4. **Server starten**
+4. **Server starten:**
 
+   ```bash
    node server.js
+   ```
 
-5. **Browser öffnen**
+5. **Browser öffnen:**
 
-   Rufe http://loalhost:3000 auf, um die Anwendung zu nutzen
+   Rufe http://localhost:3000 auf, um die Anwendung zu nutzen
+
+#### Option 2: Docker Installation
+
+1. **Repository klonen:**
+
+   ```bash
+   git clone https://github.com/JulFoii/iso-share.git
+   cd iso-share
+   ```
+
+2. **Mit Docker Compose starten:**
+
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Browser öffnen:**
+
+   Rufe http://localhost:3000 auf, um die Anwendung zu nutzen
+
+#### Docker Befehle
+
+- **Container stoppen:** `docker-compose down`
+- **Logs anzeigen:** `docker-compose logs -f`
+- **Container neu erstellen:** `docker-compose up -d --build`
+- **Nur Docker (ohne Compose):**
+  ```bash
+  docker build -t iso-share .
+  docker run -d -p 3000:3000 -v $(pwd)/uploads:/app/uploads iso-share
+  ```
