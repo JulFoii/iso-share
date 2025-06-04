@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
-const PASSWORD = 'PASSWORD'; // 🔐 Hier dein Admin-Passwort
+const PORT = process.env.PORT || 3000;
+const PASSWORD = process.env.ADMIN_PASSWORD || 'PASSWORD'; // 🔐 Use environment variable or default
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -18,9 +18,10 @@ app.use(express.json());
 
 // Session-Konfiguration
 app.use(session({
-    secret: 'supersecretkey',
+    secret: process.env.SESSION_SECRET || 'supersecretkey',
     resave: false,
-    saveUninitialized: false
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 1000 * 60 * 60 * 24 } // 24 hours
 }));
 
 // Auth-Middleware
@@ -33,21 +34,40 @@ function checkAuth(req, res, next) {
 
 // Startseite (User-Ansicht)
 app.get('/', (req, res) => {
-    const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
-    const fileData = files.map(name => {
-        const size = fs.statSync(path.join('uploads', name)).size;
-        return { name, size };
-    });
-    res.render('index', { files: fileData });
+    try {
+        if (!fs.existsSync('./uploads')) {
+            fs.mkdirSync('./uploads', { recursive: true });
+        }
+        const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
+        const fileData = files.map(name => {
+            const size = fs.statSync(path.join('uploads', name)).size;
+            return { name, size };
+        });
+        res.render('index', { files: fileData });
+    } catch (error) {
+        console.error('Error loading files:', error);
+        res.status(500).render('index', { files: [] });
+    }
 });
 
 // Datei-Download
 app.get('/download/:filename', (req, res) => {
-    const filePath = path.join(__dirname, 'uploads', req.params.filename);
-    if (fs.existsSync(filePath)) {
-        res.download(filePath);
-    } else {
-        res.status(404).send('Datei nicht gefunden');
+    try {
+        const filename = req.params.filename;
+        // Security: Prevent path traversal attacks
+        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+            return res.status(400).send('Invalid filename');
+        }
+        
+        const filePath = path.join(__dirname, 'uploads', filename);
+        if (fs.existsSync(filePath) && filename.endsWith('.iso')) {
+            res.download(filePath);
+        } else {
+            res.status(404).send('Datei nicht gefunden');
+        }
+    } catch (error) {
+        console.error('Download error:', error);
+        res.status(500).send('Server error');
     }
 });
 
@@ -68,12 +88,20 @@ app.post('/login', (req, res) => {
 
 // Admin Upload-Ansicht
 app.get('/admin-upload', checkAuth, (req, res) => {
-    const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
-    const fileData = files.map(name => {
-        const size = fs.statSync(path.join('uploads', name)).size;
-        return { name, size };
-    });
-    res.render('admin', { files: fileData });
+    try {
+        if (!fs.existsSync('./uploads')) {
+            fs.mkdirSync('./uploads', { recursive: true });
+        }
+        const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
+        const fileData = files.map(name => {
+            const size = fs.statSync(path.join('uploads', name)).size;
+            return { name, size };
+        });
+        res.render('admin', { files: fileData });
+    } catch (error) {
+        console.error('Error loading admin files:', error);
+        res.status(500).render('admin', { files: [] });
+    }
 });
 
 // Upload
@@ -103,6 +131,16 @@ app.get('/logout', (req, res) => {
     req.session.destroy(() => {
         res.redirect('/');
     });
+});
+
+// Privacy Policy
+app.get('/privacy', (req, res) => {
+    res.render('privacy');
+});
+
+// Imprint
+app.get('/imprint', (req, res) => {
+    res.render('imprint');
 });
 
 // 🔍 Suche in der User-Ansicht
