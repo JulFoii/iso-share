@@ -26,9 +26,50 @@ npm start
 # or
 node server.js
 
+# Development with auto-reload
+npm run dev
+
 # Access the application
 # Public view: http://localhost:3000
 # Admin login: http://localhost:3000/login
+```
+
+### Testing & Quality
+```bash
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run linting
+npm run lint
+
+# Fix linting issues
+npm run lint:fix
+```
+
+### CI/CD & Deployment
+```bash
+# Build Docker image
+docker build -t iso-share .
+
+# Run with Docker Compose (development)
+docker-compose up -d
+
+# Run with Docker Compose (production)
+docker-compose -f docker-compose.prod.yml up -d
+
+# Deploy to different environments
+./scripts/deploy.sh staging
+./scripts/deploy.sh production
+./scripts/deploy.sh k8s
+
+# Kubernetes deployment
+kubectl apply -f k8s/
 ```
 
 ### File Operations
