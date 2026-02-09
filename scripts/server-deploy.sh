@@ -16,7 +16,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-COMPOSE_FILE="docker-compose.yml"
+COMPOSE_FILE="docker-compose.prod.yml"
 SERVICE_NAME="iso-share"
 CONTAINER_NAME="iso-share-app"
 STATE_DIR="${STATE_DIR:-$ROOT_DIR/.deploy}"

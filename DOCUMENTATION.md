@@ -418,17 +418,22 @@ export SESSION_SECRET=dev-secret
 
 ### Production Deployment
 
-#### Docker Production Setup (single compose file)
-
-Das Projekt nutzt **nur eine** `docker-compose.yml`.
-
-- Lokal: baut das Image aus dem Repository
-- Server/Prod: setze `ISO_SHARE_IMAGE=ghcr.io/<OWNER>/<REPO>:latest` in `.env`, dann wird das Image gepullt
-- Watchtower ist über ein Compose-**Profile** aktivierbar: `--profile watchtower`
-
-```bash
-# Produktion (mit Watchtower)
-docker compose --profile watchtower up -d
+#### Docker Production Setup
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+services:
+  iso-share:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
 ```
 
 #### Environment Configuration

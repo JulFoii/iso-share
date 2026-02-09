@@ -6,12 +6,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Required for pushing to GHCR with the built-in GITHUB_TOKEN
-  contents: read
+  contents: write
   packages: write
-  # Required for provenance/SBOM generation (if enabled)
-  id-token: write
-  attestations: write
 
 concurrency:
   group: docker-main
@@ -19,7 +15,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # NOTE: GHCR requires lowercase image names. We compute a lowercased name in a step below.
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -35,11 +30,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute lowercase image name
-        shell: bash
-        run: |
-          echo "IMAGE_NAME_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -51,7 +41,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -69,14 +59,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
 
   release:
     needs: build_and_push
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Create GitHub Release (latest)
         uses: softprops/action-gh-release@v2
