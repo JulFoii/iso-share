@@ -87,7 +87,6 @@
     <div class="container">
       <a class="navbar-brand" href="/">ISO Share</a>
       <div class="ms-auto">
-        <a href="/account" class="btn btn-outline-light btn-lg me-2">DSGVO</a>
         <a href="/logout" class="btn btn-outline-light btn-lg">Logout</a>
       </div>
     </div>
@@ -168,11 +167,10 @@
 
   <footer class="footer">
     <div class="container">
-      <p class="mb-0">© <%= year %> ISO Share. Alle Rechte vorbehalten.</p>
+      <p class="mb-0">© 2025 ISO Share. Alle Rechte vorbehalten.</p>
       <div class="mt-1">
-        <a href="/datenschutz">Datenschutz</a>
-        <a href="/impressum">Impressum</a>
-        <a href="/cookie-settings">Cookies</a>
+        <a href="/privacy">Datenschutz</a>
+        <a href="/imprint">Impressum</a>
       </div>
     </div>
   </footer>
@@ -359,9 +357,5 @@
   });
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-  window.__SHOW_COOKIE_BANNER__ = <%= showCookieBanner ? 'true' : 'false' %>;
-</script>
-<script src="/cookie-consent.js"></script>
 </body>
 </html>
