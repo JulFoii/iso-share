@@ -1,24 +1,47 @@
-version: '3.8'
+version: "3.8"
 
 services:
   iso-share:
-    build: .
+    # Local dev/default: build from current repo.
+    # Server/prod: set ISO_SHARE_IMAGE in .env to pull from GHCR (Watchtower can auto-update).
+    image: ${ISO_SHARE_IMAGE:-iso-share:local}
+    build:
+      context: .
     container_name: iso-share-app
     ports:
-      - "3000:3000"
+      - "${ISO_SHARE_PORT:-3000}:3000"
     volumes:
       - ./uploads:/app/uploads
       - iso-share-sessions:/tmp/sessions
+    env_file:
+      - .env
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - SESSION_SECRET=${SESSION_SECRET:-your-session-secret-here}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-PASSWORD}
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: iso-share-watchtower
+    restart: unless-stopped
+    profiles: ["watchtower"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-60}
+      - WATCHTOWER_CLEANUP=${WATCHTOWER_CLEANUP:-true}
+      - WATCHTOWER_INCLUDE_RESTARTING=${WATCHTOWER_INCLUDE_RESTARTING:-true}
+      - WATCHTOWER_ROLLING_RESTART=${WATCHTOWER_ROLLING_RESTART:-true}
+    command: --label-enable --stop-timeout 30s
 
 volumes:
   iso-share-sessions:

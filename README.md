@@ -162,6 +162,17 @@ Auf dem Server übernimmt **Watchtower** dann vollautomatisch das Update:
 - Docker + Docker Compose Plugin auf dem Server
 - GHCR Image ist **public** ODER du loggst den Server einmalig an GHCR ein (für private Repos)
 
+**Wichtig (gegen 403 beim Push nach GHCR):**
+
+Damit GitHub Actions Images nach **GHCR** pushen darf (mit dem eingebauten `GITHUB_TOKEN`), muss im Repo folgendes gesetzt sein:
+
+1. **Settings → Actions → General → Workflow permissions**
+   - ✅ **Read and write permissions** aktivieren
+
+Optional (wenn du die GHCR-Pakete wirklich öffentlich brauchst):
+2. **Packages → iso-share → Package settings**
+   - Visibility: **Public**
+
 ### 2) Server-Setup (einmalig)
 
 Auf dem Server (z.B. `/opt/iso-share`):
@@ -170,12 +181,12 @@ Auf dem Server (z.B. `/opt/iso-share`):
 mkdir -p /opt/iso-share/uploads
 cd /opt/iso-share
 
-# docker-compose.prod.yml und .env hierhin kopieren
+# docker-compose.yml und .env hierhin kopieren
 
 # nur nötig, wenn GHCR privat ist:
 docker login ghcr.io -u <dein_github_user> -p <DEIN_PAT_MIT_read:packages>
 
-docker compose -f docker-compose.prod.yml up -d
+docker compose --profile watchtower up -d
 ```
 
 ✅ Ab jetzt aktualisiert Watchtower automatisch den Container, sobald `:latest` auf GHCR neu gebaut wurde.
@@ -199,7 +210,7 @@ Hinweis: Damit der Server Images ziehen kann, muss das GHCR-Paket entweder **pub
 ### 5) Production Compose
 
 Nutze für Production:
-- `docker-compose.prod.yml` (zieht Image von GHCR und startet zusätzlich Watchtower)
+- `docker-compose.yml` (einzige Compose-Datei; kann lokal bauen oder in Produktion ein Image von GHCR ziehen; Watchtower ist per Profile aktivierbar)
 
 Uploads bleiben erhalten, weil `./uploads` auf dem Server ein bind-mount ist.
 
@@ -221,7 +232,7 @@ ISO_SHARE_PORT=3000
 2. Starte den Stack:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+docker compose --profile watchtower up -d
 ```
 
 Ab dann: **Push/Merge nach `main` ⇒ neues Image ⇒ Watchtower zieht & ersetzt automatisch.**

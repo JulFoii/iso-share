@@ -5,8 +5,11 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const PASSWORD = process.env.ADMIN_PASSWORD || 'PASSWORD'; // 🔐 Use environment variable or default
+const PORT = Number(process.env.PORT) || 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'PASSWORD';
+
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const ISO_EXT = '.iso';
 
 // -----------------------------------------------------------------------------
 // Legal / site owner info (configure via .env)
@@ -24,15 +27,46 @@ const LEGAL = {
     contentResponsibleName: process.env.LEGAL_CONTENT_RESPONSIBLE || '',
 };
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: UPLOADS_DIR });
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-// Static files
+
+// Static assets (never serve uploads directly; downloads go through the /download route)
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static('uploads'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+function ensureUploadsDir() {
+    if (!fs.existsSync(UPLOADS_DIR)) {
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+}
+
+function isSafeBasename(name) {
+    // blocks path traversal / directory separators
+    return typeof name === 'string' && name.length > 0 && !name.includes('..') && !name.includes('/') && !name.includes('\\');
+}
+
+function toIsoBasename(name) {
+    if (!isSafeBasename(name)) return null;
+    const base = path.basename(name);
+    if (!base.toLowerCase().endsWith(ISO_EXT)) return null;
+    return base;
+}
+
+function listIsoFiles(q = '') {
+    ensureUploadsDir();
+    const query = String(q || '').trim().toLowerCase();
+    return fs
+        .readdirSync(UPLOADS_DIR)
+        .filter((f) => f.toLowerCase().endsWith(ISO_EXT))
+        .filter((f) => (query ? f.toLowerCase().includes(query) : true))
+        .map((name) => {
+            const stat = fs.statSync(path.join(UPLOADS_DIR, name));
+            return { name, size: stat.size, mtime: stat.mtime };
+        });
+}
 
 // -----------------------------------------------------------------------------
 // Minimal cookie helpers (no additional dependency)
@@ -99,57 +133,49 @@ app.use((req, res, next) => {
 });
 
 // Session-Konfiguration
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'supersecretkey',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { secure: false, maxAge: 1000 * 60 * 60 * 24 } // 24 hours
-}));
+app.set('trust proxy', 1);
+app.use(
+    session({
+        secret: process.env.SESSION_SECRET || 'supersecretkey',
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            secure: false, // set true only behind HTTPS
+            sameSite: 'lax',
+            maxAge: 1000 * 60 * 60 * 24, // 24h
+        },
+    })
+);
 
 // Auth-Middleware
 function checkAuth(req, res, next) {
-    if (req.session && req.session.loggedIn) {
-        return next();
-    }
-    res.redirect('/login');
+    if (req.session?.loggedIn) return next();
+    return res.redirect('/login');
 }
 
 // Startseite (User-Ansicht)
 app.get('/', (req, res) => {
     try {
-        if (!fs.existsSync('./uploads')) {
-            fs.mkdirSync('./uploads', { recursive: true });
-        }
-        const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
-        const fileData = files.map(name => {
-            const size = fs.statSync(path.join('uploads', name)).size;
-            return { name, size };
-        });
-        res.render('index', { files: fileData });
+        const searchQuery = String(req.query.q || '').trim();
+        const files = listIsoFiles(searchQuery);
+        res.render('index', { files, searchQuery });
     } catch (error) {
         console.error('Error loading files:', error);
-        res.status(500).render('index', { files: [] });
+        res.status(500).render('index', { files: [], searchQuery: '' });
     }
 });
 
 // Datei-Download
 app.get('/download/:filename', (req, res) => {
     try {
-        const filename = req.params.filename;
-        // Security: Prevent path traversal attacks
-        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-            return res.status(400).send('Invalid filename');
-        }
-        
-        const filePath = path.join(__dirname, 'uploads', filename);
-        if (fs.existsSync(filePath) && filename.endsWith('.iso')) {
-            res.download(filePath);
-        } else {
-            res.status(404).send('Datei nicht gefunden');
-        }
+        const filename = toIsoBasename(req.params.filename);
+        if (!filename) return res.status(400).send('Invalid filename');
+        const filePath = path.join(UPLOADS_DIR, filename);
+        if (!fs.existsSync(filePath)) return res.status(404).send('Datei nicht gefunden');
+        return res.download(filePath);
     } catch (error) {
         console.error('Download error:', error);
-        res.status(500).send('Server error');
+        return res.status(500).send('Server error');
     }
 });
 
@@ -160,7 +186,7 @@ app.get('/login', (req, res) => {
 
 app.post('/login', (req, res) => {
     const { password } = req.body;
-    if (password === PASSWORD) {
+    if (password === ADMIN_PASSWORD) {
         req.session.loggedIn = true;
         res.redirect('/admin-upload');
     } else {
@@ -171,41 +197,43 @@ app.post('/login', (req, res) => {
 // Admin Upload-Ansicht
 app.get('/admin-upload', checkAuth, (req, res) => {
     try {
-        if (!fs.existsSync('./uploads')) {
-            fs.mkdirSync('./uploads', { recursive: true });
-        }
-        const files = fs.readdirSync('./uploads').filter(f => f.endsWith('.iso'));
-        const fileData = files.map(name => {
-            const size = fs.statSync(path.join('uploads', name)).size;
-            return { name, size };
-        });
-        res.render('admin', { files: fileData });
+        const searchQuery = String(req.query.q || '').trim();
+        const files = listIsoFiles(searchQuery);
+        res.render('admin', { files, searchQuery });
     } catch (error) {
         console.error('Error loading admin files:', error);
-        res.status(500).render('admin', { files: [] });
+        res.status(500).render('admin', { files: [], searchQuery: '' });
     }
 });
 
 // Upload
 app.post('/upload', checkAuth, upload.single('file'), (req, res) => {
     const file = req.file;
-    if (!file.originalname.endsWith('.iso')) {
-        fs.unlinkSync(file.path);
-        return res.send('Nur .iso-Dateien erlaubt!');
+    if (!file) return res.status(400).send('Keine Datei hochgeladen');
+
+    const safeName = toIsoBasename(file.originalname);
+    if (!safeName) {
+        try { fs.unlinkSync(file.path); } catch (_) {}
+        return res.status(400).send('Nur .iso-Dateien erlaubt!');
     }
-    const targetPath = path.join('uploads', file.originalname);
+
+    ensureUploadsDir();
+    const targetPath = path.join(UPLOADS_DIR, safeName);
     fs.renameSync(file.path, targetPath);
-    res.redirect('/admin-upload');
+    return res.redirect('/admin-upload');
 });
 
 // Datei löschen
 app.post('/delete', checkAuth, (req, res) => {
-    const { filename } = req.body;
-    const filePath = path.join(__dirname, 'uploads', filename);
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    const filename = toIsoBasename(req.body?.filename);
+    if (!filename) return res.redirect('/admin-upload');
+    const filePath = path.join(UPLOADS_DIR, filename);
+    try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (e) {
+        console.error('Delete error:', e);
     }
-    res.redirect('/admin-upload');
+    return res.redirect('/admin-upload');
 });
 
 // Logout
@@ -268,15 +296,11 @@ app.get('/account', checkAuth, (req, res) => {
 // Export: liefert JSON-Datei mit (minimal) gespeicherten Daten
 app.get('/account/export', checkAuth, (req, res) => {
     try {
-        if (!fs.existsSync('./uploads')) {
-            fs.mkdirSync('./uploads', { recursive: true });
-        }
-        const uploads = fs.readdirSync('./uploads')
-            .filter(f => f.endsWith('.iso'))
-            .map(name => {
-                const stat = fs.statSync(path.join('uploads', name));
-                return { name, size: stat.size, mtime: stat.mtime.toISOString() };
-            });
+        const uploads = listIsoFiles().map((u) => ({
+            name: u.name,
+            size: u.size,
+            mtime: u.mtime.toISOString(),
+        }));
 
         const exportData = {
             exportedAt: new Date().toISOString(),
@@ -308,11 +332,10 @@ app.post('/account/delete', checkAuth, (req, res) => {
 
     try {
         if (doPurge) {
-            if (fs.existsSync('./uploads')) {
-                for (const f of fs.readdirSync('./uploads')) {
-                    if (f.endsWith('.iso')) {
-                        fs.unlinkSync(path.join('uploads', f));
-                    }
+            ensureUploadsDir();
+            for (const f of fs.readdirSync(UPLOADS_DIR)) {
+                if (f.toLowerCase().endsWith(ISO_EXT)) {
+                    fs.unlinkSync(path.join(UPLOADS_DIR, f));
                 }
             }
         }
@@ -326,38 +349,6 @@ app.post('/account/delete', checkAuth, (req, res) => {
     req.session.destroy(() => {
         res.redirect('/');
     });
-});
-
-// 🔍 Suche in der User-Ansicht
-app.get('/search', (req, res) => {
-    if (!fs.existsSync('./uploads')) {
-        fs.mkdirSync('./uploads', { recursive: true });
-    }
-    const query = req.query.q?.toLowerCase() || '';
-    const files = fs.readdirSync('./uploads').filter(f =>
-        f.endsWith('.iso') && f.toLowerCase().includes(query)
-    );
-    const fileData = files.map(name => {
-        const size = fs.statSync(path.join('uploads', name)).size;
-        return { name, size };
-    });
-    res.render('index', { files: fileData, searchQuery: query });
-});
-
-// 🔍 Suche in der Admin-Ansicht
-app.get('/admin-search', checkAuth, (req, res) => {
-    if (!fs.existsSync('./uploads')) {
-        fs.mkdirSync('./uploads', { recursive: true });
-    }
-    const query = req.query.q?.toLowerCase() || '';
-    const files = fs.readdirSync('./uploads').filter(f =>
-        f.endsWith('.iso') && f.toLowerCase().includes(query)
-    );
-    const fileData = files.map(name => {
-        const size = fs.statSync(path.join('uploads', name)).size;
-        return { name, size };
-    });
-    res.render('admin', { files: fileData, searchQuery: query });
 });
 
 app.listen(PORT, () => {
