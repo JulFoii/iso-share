@@ -162,18 +162,12 @@ Auf dem Server übernimmt **Watchtower** dann vollautomatisch das Update:
 - Docker + Docker Compose Plugin auf dem Server
 - GHCR Image ist **public** ODER du loggst den Server einmalig an GHCR ein (für private Repos)
 
-...
+**Wichtig (gegen 403 beim Push nach GHCR):**
+
+Damit GitHub Actions Images nach **GHCR** pushen darf (mit dem eingebauten `GITHUB_TOKEN`), muss im Repo folgendes gesetzt sein:
 
 1. **Settings → Actions → General → Workflow permissions**
    - ✅ **Read and write permissions** aktivieren
-
-**Falls du trotzdem weiterhin 403 bekommst:**
-
-- Lege ein Repo-Secret **GHCR_PAT** an (PAT mit `write:packages`, optional `read:packages`).
-- Die Pipeline nutzt automatisch zuerst `GHCR_PAT` und fällt sonst auf `GITHUB_TOKEN` zurück.
-
-> Hinweis: Ein Push zu GHCR funktioniert grundsätzlich **nicht ohne Auth** (anonymer Push ist nicht möglich).
-
 
 Optional (wenn du die GHCR-Pakete wirklich öffentlich brauchst):
 2. **Packages → iso-share → Package settings**
