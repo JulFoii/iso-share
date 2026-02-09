@@ -1,14 +1,26 @@
 # Use official Node.js runtime as base image
 FROM node:18-alpine
 
+# Build metadata (populated by CI)
+ARG VERSION="dev"
+ARG VCS_REF="unknown"
+ARG BUILD_DATE="unknown"
+
+LABEL org.opencontainers.image.title="iso-share" \
+      org.opencontainers.image.description="ISO Share - simple ISO/file share web app" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.created="$BUILD_DATE"
+
 # Set working directory in container
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install curl for health checks + install production dependencies
+RUN apk add --no-cache curl \
+  && npm ci --only=production
 
 # Copy application code
 COPY . .
