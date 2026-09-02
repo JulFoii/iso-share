@@ -11,10 +11,14 @@ services:
       - iso-share-sessions:/tmp/sessions
     environment:
       - NODE_ENV=production
-      - SESSION_SECRET=${SESSION_SECRET:-your-session-secret-here}
+      # Ohne gesetzte Werte generiert der Server sichere Zufallswerte und loggt
+      # das Admin-Passwort einmalig. Für feste Zugangsdaten hier bzw. per .env
+      # setzen — keine schwachen Platzhalter mehr.
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
