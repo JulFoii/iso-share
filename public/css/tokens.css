@@ -1,0 +1,186 @@
+/*
+ * Design-Tokens.
+ *
+ * Farben in oklch(): perzeptuell gleichmaessige Helligkeit, d. h. zwei Werte
+ * mit gleichem L wirken auch gleich hell — bei Hex/HSL stimmt das nicht. Die
+ * Achsen sind L (Helligkeit) / C (Buntheit) / H (Farbwinkel), P3-Gamut wird
+ * mitgenutzt, wenn das Display es kann.
+ *
+ * Jeder Token steht *einmal* da: light-dark(hell, dunkel) waehlt anhand von
+ * `color-scheme` aus. Dark bleibt der Default, `[data-theme="light"]` schaltet
+ * um — theme-init.js setzt das Attribut vor dem ersten Paint.
+ */
+
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Die Grain-Deckkraft ist eine Zahl und damit nichts fuer light-dark() */
+:root {
+  --grain-opacity: 0.035;
+}
+
+:root[data-theme="light"] {
+  --grain-opacity: 0.025;
+}
+
+:root {
+  /* Flaechen, von hinten nach vorne */
+  --bg: light-dark(oklch(99% 0.001 285), oklch(11.5% 0.002 285));
+  --bg-elevated: light-dark(oklch(100% 0 0), oklch(14% 0.004 285));
+  --surface: light-dark(oklch(100% 0 0), oklch(16.5% 0.005 285));
+  --surface-hover: light-dark(oklch(97% 0.002 285), oklch(20% 0.006 285));
+  --surface-sunken: light-dark(oklch(96.5% 0.002 285), oklch(13% 0.003 285));
+
+  /* Linien */
+  --border: light-dark(oklch(91% 0.004 286), oklch(26.5% 0.008 285));
+  --border-strong: light-dark(oklch(85% 0.006 286), oklch(33.5% 0.01 285));
+
+  /* Text */
+  --text: light-dark(oklch(21% 0.005 285), oklch(96.5% 0.002 285));
+  --text-muted: light-dark(oklch(44% 0.013 286), oklch(71% 0.012 286));
+  --text-subtle: light-dark(oklch(58% 0.012 286), oklch(55% 0.014 286));
+
+  /* Akzent: Links, Fokusringe, aktive Zustaende */
+  --accent: light-dark(oklch(45% 0.2 265), oklch(74% 0.13 268));
+  --accent-hover: light-dark(oklch(39% 0.19 265), oklch(80% 0.11 268));
+  --accent-subtle: color-mix(in oklab, var(--accent) 12%, transparent);
+
+  /* Primaerbutton bewusst hell auf dunkel (Kontrast statt Farbe) */
+  --btn-primary-bg: light-dark(oklch(21% 0.005 285), oklch(98% 0 0));
+  --btn-primary-bg-hover: light-dark(oklch(10% 0 0), oklch(100% 0 0));
+  --btn-primary-fg: light-dark(oklch(100% 0 0), oklch(11.5% 0.002 285));
+
+  /* Semantik */
+  --success: light-dark(oklch(48% 0.12 160), oklch(78% 0.16 160));
+  --success-subtle: color-mix(in oklab, var(--success) 12%, transparent);
+  --danger: light-dark(oklch(52% 0.2 20), oklch(70% 0.18 18));
+  --danger-hover: light-dark(oklch(45% 0.2 20), oklch(76% 0.16 18));
+  --danger-subtle: color-mix(in oklab, var(--danger) 12%, transparent);
+  --warning: light-dark(oklch(50% 0.11 78), oklch(81% 0.15 82));
+  --warning-subtle: color-mix(in oklab, var(--warning) 14%, transparent);
+
+  /* Hintergrund-Glow: zwei weit auseinanderliegende Farbwinkel, sehr flau.
+     light-dark() nimmt nur Farben als Argumente, also umschliesst es hier das
+     ganze color-mix() und nicht dessen Prozentwert. */
+  --glow-1: light-dark(
+    color-mix(in oklab, var(--accent) 9%, transparent),
+    color-mix(in oklab, var(--accent) 16%, transparent)
+  );
+  --glow-2: light-dark(
+    color-mix(in oklab, oklch(72% 0.14 200) 7%, transparent),
+    color-mix(in oklab, oklch(72% 0.14 200) 12%, transparent)
+  );
+
+  /* Typografie */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+    Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  --tracking-tight: -0.011em;
+  --tracking-tighter: -0.021em;
+
+  /* Abstaende (4px-Raster) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* Im Dunkeln tragen Borders die Tiefe, Schatten nur den Rest */
+  --shadow-color: light-dark(oklch(21% 0.005 285 / 8%), oklch(0% 0 0 / 45%));
+  --shadow-sm: 0 1px 2px var(--shadow-color);
+  --shadow: 0 4px 12px var(--shadow-color);
+  --shadow-lg: 0 16px 48px var(--shadow-color), 0 2px 8px var(--shadow-color);
+
+  --ring: 0 0 0 3px var(--accent-subtle), 0 0 0 1px var(--accent);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  --container: 68rem;
+  --nav-height: 3.5rem;
+}
+
+/*
+ * Fallback fuer Browser ohne light-dark(): dort loesen die Tokens oben zu
+ * nichts auf, also die dunkle Palette noch einmal als flache Werte setzen.
+ * Betrifft nur Alt-Browser; alles ab Chrome 123 / Safari 17.5 / Firefox 120
+ * nimmt den Block oben.
+ */
+@supports not (color: light-dark(white, black)) {
+  :root {
+    --bg: oklch(11.5% 0.002 285);
+    --bg-elevated: oklch(14% 0.004 285);
+    --surface: oklch(16.5% 0.005 285);
+    --surface-hover: oklch(20% 0.006 285);
+    --surface-sunken: oklch(13% 0.003 285);
+    --border: oklch(26.5% 0.008 285);
+    --border-strong: oklch(33.5% 0.01 285);
+    --text: oklch(96.5% 0.002 285);
+    --text-muted: oklch(71% 0.012 286);
+    --text-subtle: oklch(55% 0.014 286);
+    --accent: oklch(74% 0.13 268);
+    --accent-hover: oklch(80% 0.11 268);
+    --btn-primary-bg: oklch(98% 0 0);
+    --btn-primary-bg-hover: oklch(100% 0 0);
+    --btn-primary-fg: oklch(11.5% 0.002 285);
+    --success: oklch(78% 0.16 160);
+    --danger: oklch(70% 0.18 18);
+    --danger-hover: oklch(76% 0.16 18);
+    --warning: oklch(81% 0.15 82);
+    --glow-1: color-mix(in oklab, var(--accent) 16%, transparent);
+    --glow-2: color-mix(in oklab, oklch(72% 0.14 200) 12%, transparent);
+    --shadow-color: oklch(0% 0 0 / 45%);
+  }
+
+  :root[data-theme="light"] {
+    --bg: oklch(99% 0.001 285);
+    --bg-elevated: oklch(100% 0 0);
+    --surface: oklch(100% 0 0);
+    --surface-hover: oklch(97% 0.002 285);
+    --surface-sunken: oklch(96.5% 0.002 285);
+    --border: oklch(91% 0.004 286);
+    --border-strong: oklch(85% 0.006 286);
+    --text: oklch(21% 0.005 285);
+    --text-muted: oklch(44% 0.013 286);
+    --text-subtle: oklch(58% 0.012 286);
+    --accent: oklch(45% 0.2 265);
+    --accent-hover: oklch(39% 0.19 265);
+    --btn-primary-bg: oklch(21% 0.005 285);
+    --btn-primary-bg-hover: oklch(10% 0 0);
+    --btn-primary-fg: oklch(100% 0 0);
+    --success: oklch(48% 0.12 160);
+    --danger: oklch(52% 0.2 20);
+    --danger-hover: oklch(45% 0.2 20);
+    --warning: oklch(50% 0.11 78);
+    --glow-1: color-mix(in oklab, var(--accent) 9%, transparent);
+    --glow-2: color-mix(in oklab, oklch(72% 0.14 200) 7%, transparent);
+    --shadow-color: oklch(21% 0.005 285 / 8%);
+  }
+}
