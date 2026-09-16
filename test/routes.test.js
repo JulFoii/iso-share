@@ -5,11 +5,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { once } = require('events');
 
 const { startTestApp } = require('./helpers/app');
 const { makeIso } = require('./helpers/make-iso');
+const { createApp } = require('../server');
 
 /* Legt eine Datei direkt in uploads/ ab und laesst sie hashen. */
 async function seedIso(app, name, options = {}) {
@@ -231,6 +234,317 @@ test('Login-Versuche werden pro IP gedrosselt', async t => {
 
     // Auch das richtige Passwort kommt jetzt nicht mehr durch
     assert.equal((await app.login()).res.status, 429);
+});
+
+/* ======================================================= Admin-Passwort */
+
+test('POST /admin-password ohne Sitzung wird abgewiesen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'neues-passwort', confirmPassword: 'neues-passwort' }).toString(),
+    });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/login');
+});
+
+test('zu kurzes Passwort wird abgelehnt, altes bleibt gueltig', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'kurz', confirmPassword: 'kurz' }).toString(),
+    });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /mindestens 8 Zeichen/);
+
+    assert.equal((await app.login()).res.status, 302, 'altes Passwort muss weiterhin gelten');
+});
+
+test('abweichende Passwortbestaetigung wird abgelehnt, altes bleibt gueltig', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'neues-passwort-1', confirmPassword: 'neues-passwort-2' }).toString(),
+    });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /stimmen nicht überein/);
+
+    assert.equal((await app.login()).res.status, 302, 'altes Passwort muss weiterhin gelten');
+});
+
+test('/admin-password mit Accept: application/json liefert JSON statt Redirect/Render', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const tooShort = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        headers: {
+            Cookie: cookie,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+        },
+        body: new URLSearchParams({ password: 'kurz', confirmPassword: 'kurz' }).toString(),
+    });
+    assert.equal(tooShort.status, 400);
+    assert.match((await tooShort.json()).error, /mindestens 8 Zeichen/);
+
+    const success = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        headers: {
+            Cookie: cookie,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+        },
+        body: new URLSearchParams({ password: 'per-json-gesetzt', confirmPassword: 'per-json-gesetzt' }).toString(),
+    });
+    assert.equal(success.status, 200);
+    assert.deepEqual(await success.json(), { ok: true });
+
+    assert.equal((await app.login('per-json-gesetzt')).res.status, 302);
+});
+
+test('erfolgreiche Passwortaenderung: altes schlaegt fehl, neues funktioniert', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'ganz-neues-passwort', confirmPassword: 'ganz-neues-passwort' }).toString(),
+    });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/admin-upload');
+
+    assert.equal((await app.login()).res.status, 401, 'altes Passwort darf nicht mehr gelten');
+    assert.equal((await app.login('ganz-neues-passwort')).res.status, 302);
+});
+
+test('geaendertes Passwort ueberlebt einen Neustart, ADMIN_PASSWORD der alten Instanz nicht mehr', async t => {
+    const app = await startTestApp();
+    const { cookie } = await app.login();
+    const root = app.root;
+
+    await fetch(app.url('/admin-password'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'persistiertes-passwort', confirmPassword: 'persistiertes-passwort' }).toString(),
+    });
+
+    await app.shutdown();
+    const restarted = await startTestApp({
+        uploadsDir: path.join(root, 'uploads'),
+        tmpDir: path.join(root, 'tmp-uploads'),
+        sessionDir: path.join(root, 'sessions'),
+        // andere adminPassword-Option als beim ersten Start — darf keine
+        // Rolle mehr spielen, sobald einmal ueber die UI geaendert wurde
+        adminPassword: 'ignoriert-weil-persistiert',
+    });
+    t.after(() => restarted.close());
+
+    assert.equal((await restarted.login('ignoriert-weil-persistiert')).res.status, 401);
+    assert.equal((await restarted.login('persistiertes-passwort')).res.status, 302);
+});
+
+/* ======================================================= Admin-Benutzername */
+
+test('falscher Benutzername mit richtigem Passwort wird generisch abgelehnt', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await app.login('korrekt-horse-battery', 'jemand-anderes');
+    assert.equal(res.res.status, 401);
+    const body = await res.res.text();
+    assert.match(body, /Benutzername oder Passwort falsch/);
+    assert.doesNotMatch(body, /Falsches Passwort/);
+});
+
+test('richtiger Benutzername mit falschem Passwort wird generisch abgelehnt', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await app.login('falsch', 'admin');
+    assert.equal(res.res.status, 401);
+    assert.match(await res.res.text(), /Benutzername oder Passwort falsch/);
+});
+
+test('POST /admin-username ohne Sitzung wird abgewiesen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/admin-username'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ username: 'neuer-name' }).toString(),
+    });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/login');
+});
+
+test('ungueltiger Benutzername wird abgelehnt, alter bleibt gueltig', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    for (const bad of ['', '   ', 'mit leerzeichen', 'a'.repeat(65)]) {
+        const res = await fetch(app.url('/admin-username'), {
+            method: 'POST',
+            headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ username: bad }).toString(),
+        });
+        assert.equal(res.status, 400, `"${bad}" haette 400 ergeben muessen`);
+    }
+
+    assert.equal((await app.login()).res.status, 302, 'alter Benutzername muss weiterhin gelten');
+});
+
+test('/admin-username mit Accept: application/json liefert JSON statt Redirect/Render', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const invalid = await fetch(app.url('/admin-username'), {
+        method: 'POST',
+        headers: {
+            Cookie: cookie,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+        },
+        body: new URLSearchParams({ username: '' }).toString(),
+    });
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json()).error, /Ungültiger Benutzername/);
+
+    const success = await fetch(app.url('/admin-username'), {
+        method: 'POST',
+        headers: {
+            Cookie: cookie,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+        },
+        body: new URLSearchParams({ username: 'per-json-gesetzt' }).toString(),
+    });
+    assert.equal(success.status, 200);
+    assert.deepEqual(await success.json(), { ok: true });
+
+    assert.equal((await app.login('korrekt-horse-battery', 'per-json-gesetzt')).res.status, 302);
+});
+
+test('erfolgreiche Benutzernamensaenderung: alter schlaegt fehl, neuer funktioniert', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/admin-username'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ username: 'ganz-neuer-name' }).toString(),
+    });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/admin-upload');
+
+    assert.equal((await app.login()).res.status, 401, 'alter Benutzername darf nicht mehr gelten');
+    assert.equal((await app.login('korrekt-horse-battery', 'ganz-neuer-name')).res.status, 302);
+});
+
+test('geaenderter Benutzername ueberlebt einen Neustart', async t => {
+    const app = await startTestApp();
+    const { cookie } = await app.login();
+    const root = app.root;
+
+    await fetch(app.url('/admin-username'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ username: 'persistierter-name' }).toString(),
+    });
+
+    await app.shutdown();
+    const restarted = await startTestApp({
+        uploadsDir: path.join(root, 'uploads'),
+        tmpDir: path.join(root, 'tmp-uploads'),
+        sessionDir: path.join(root, 'sessions'),
+    });
+    t.after(() => restarted.close());
+
+    assert.equal((await restarted.login()).res.status, 401, 'alter Default-Benutzername darf nicht mehr gelten');
+    assert.equal(
+        (await restarted.login('korrekt-horse-battery', 'persistierter-name')).res.status,
+        302
+    );
+});
+
+test('ohne ADMIN_PASSWORD wird beim ersten Start genau einmal ein Passwort erzeugt und persistiert', async t => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'iso-share-bootstrap-'));
+    t.after(() => fsp.rm(root, { recursive: true, force: true }));
+
+    const warnings = [];
+    const log = { log() {}, warn: msg => warnings.push(msg), error() {} };
+    const dirs = {
+        uploadsDir: path.join(root, 'uploads'),
+        tmpDir: path.join(root, 'tmp-uploads'),
+        sessionDir: path.join(root, 'sessions'),
+        sessionSecret: 'test-secret',
+        scanOnStart: false,
+        sweepStaleUploads: false,
+        log,
+    };
+
+    async function loginWith(instance, password) {
+        const server = instance.app.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const res = await fetch(`${base}/login`, {
+            method: 'POST',
+            redirect: 'manual',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ username: 'admin', password }).toString(),
+        });
+        server.close();
+        server.closeAllConnections();
+        await once(server, 'close');
+        return res.status;
+    }
+
+    const first = createApp(dirs);
+    await first.start();
+
+    // [^)]* statt [^:]* bis zum Ende der Klammer: der Pfad selbst enthaelt
+    // unter Windows ein Colon (z. B. "C:\...\admin-password.json").
+    const match = warnings.join('\n').match(/Einmalig generiertes Passwort \([^)]*\):\n\s+(\S+)/);
+    assert.ok(match, 'Passwort haette geloggt werden muessen');
+    const generated = match[1];
+    assert.ok(await first.services.passwordStore.read(), 'Passwort haette persistiert werden muessen');
+    assert.equal(await loginWith(first, generated), 302);
+    await first.stop();
+
+    // Zweiter Start, gleiche Verzeichnisse: kein neues Passwort erzeugt
+    warnings.length = 0;
+    const second = createApp(dirs);
+    await second.start();
+    assert.equal(
+        warnings.some(w => w.includes('Einmalig generiertes Passwort')),
+        false,
+        'zweiter Start darf kein neues Passwort erzeugen'
+    );
+    assert.equal(await loginWith(second, generated), 302,
+        'urspruenglich generiertes Passwort muss weiterhin gelten');
+    await second.stop();
 });
 
 /* ======================================================= Upload (Chunks) */
@@ -491,6 +805,195 @@ test('Suche filtert serverseitig', async t => {
     const html = await (await fetch(app.url('/search?q=alp'))).text();
     assert.match(html, /alpine\.iso/);
     assert.doesNotMatch(html, /fedora\.iso/);
+});
+
+/* ===================================================== WebAuthn/Passkeys
+   Kein echter WebAuthn-Roundtrip hier — der braucht einen echten
+   Authenticator (siehe manueller Testpass im Plan). Getestet wird die
+   HTTP-Oberflaeche: Auth-Gating, geteiltes Rate-Limit mit /login,
+   Eingabevalidierung und dass die Challenge ueber die Session transportiert
+   wird. */
+
+test('WebAuthn-Routen verlangen eine Sitzung', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const routes = [
+        ['POST', '/webauthn/register/options'],
+        ['POST', '/webauthn/register/verify'],
+        ['GET', '/webauthn/credentials'],
+        ['DELETE', '/webauthn/credentials/abc'],
+    ];
+    for (const [method, path_] of routes) {
+        const res = await fetch(app.url(path_), {
+            method,
+            headers: { Accept: 'application/json' },
+        });
+        assert.equal(res.status, 401, `${method} ${path_} haette 401 liefern muessen`);
+    }
+});
+
+test('POST /webauthn/login/options ist oeffentlich erreichbar', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/webauthn/login/options'), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(typeof body.challenge, 'string');
+});
+
+test('Passkey-Login-Versuche teilen sich das Rate-Limit mit /login', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    let last = 0;
+    // Limit ist 10 Fehlversuche je 15 Minuten, geteilt ueber beide Routen
+    for (let i = 0; i < 12; i++) {
+        if (i % 2 === 0) {
+            last = (await app.login('falsch')).res.status;
+        } else {
+            const res = await fetch(app.url('/webauthn/login/verify'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({ credential: { id: 'unbekannt' } }),
+            });
+            last = res.status;
+        }
+    }
+    assert.equal(last, 429);
+    assert.equal((await app.login()).res.status, 429,
+        'ein Angreifer darf sein Budget nicht durch Routenwechsel verdoppeln');
+});
+
+test('DELETE mit ungueltiger Credential-ID liefert 400', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/webauthn/credentials/..%2F..%2Fetc'), {
+        method: 'DELETE',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(res.status, 400);
+});
+
+test('register/verify ohne vorherige register/options liefert 400', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/webauthn/register/verify'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ credential: {} }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'Keine offene Registrierung.');
+});
+
+test('login/verify mit unbekannter Credential-ID liefert 401 statt zu werfen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    // Erst die Ceremony beginnen, damit eine Challenge in der Session liegt
+    const options = await fetch(app.url('/webauthn/login/options'), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+    });
+    const cookie = (options.headers.getSetCookie() || [])
+        .map(value => value.split(';')[0]).join('; ');
+
+    const res = await fetch(app.url('/webauthn/login/verify'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ credential: { id: 'niemals-registriert' } }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, 'Unbekannter Passkey.');
+});
+
+test('login/verify: Challenge kommt ueber die Session, nicht ueber den Body', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    // Einen Passkey direkt im Store anlegen — der eigentliche Verify-Aufruf
+    // bleibt trotzdem ohne echten Authenticator: eine kaputte Assertion
+    // landet im catch-Zweig, aber NACH der "unbekannter Passkey"-Pruefung.
+    await app.services.webauthnStore.addCredential({
+        credentialId: 'seeded',
+        publicKey: Buffer.from('dummy-key').toString('base64url'),
+        counter: 0,
+        transports: ['internal'],
+        label: 'Test-Passkey',
+    });
+
+    const options = await fetch(app.url('/webauthn/login/options'), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+    });
+    const cookie = (options.headers.getSetCookie() || [])
+        .map(value => value.split(';')[0]).join('; ');
+
+    const res = await fetch(app.url('/webauthn/login/verify'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+            credential: {
+                id: 'seeded',
+                rawId: 'seeded',
+                type: 'public-key',
+                response: {
+                    clientDataJSON: 'x', authenticatorData: 'x', signature: 'x',
+                },
+                clientExtensionResults: {},
+            },
+        }),
+    });
+    // 401 (Verifikation fehlgeschlagen), nicht 400 (keine offene Anmeldung)
+    // — belegt, dass die Challenge ueber die Session transportiert wurde.
+    assert.equal(res.status, 401);
+    assert.notEqual((await res.json()).error, 'Keine offene Anmeldung.');
+});
+
+test('Cross-Origin-POST auf /webauthn/login/verify wird abgelehnt', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/webauthn/login/verify'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Origin: 'http://angreifer.example',
+        },
+        body: JSON.stringify({ credential: { id: 'x' } }),
+    });
+    assert.equal(res.status, 403);
+});
+
+test('GET /webauthn/credentials liefert nie den publicKey', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    await app.services.webauthnStore.addCredential({
+        credentialId: 'sichtbar',
+        publicKey: 'geheim',
+        counter: 0,
+        label: 'Test-Passkey',
+    });
+
+    const res = await fetch(app.url('/webauthn/credentials'), {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(res.status, 200);
+    const list = await res.json();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].credentialId, 'sichtbar');
+    assert.equal('publicKey' in list[0], false);
 });
 
 /* ============================================================== Header */

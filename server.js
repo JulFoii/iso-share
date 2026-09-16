@@ -1,5 +1,29 @@
 'use strict';
 
+/*
+ * @simplewebauthn/server prueft beim Laden einmalig, ob die Node-Laufzeit
+ * experimentelle Post-Quantum-Algorithmen (ML-DSA) unterstuetzt — fuer
+ * Attestation-Formate, die wir mit attestationType:'none' nie anfragen. Das
+ * loest bei jedem Start zwei ExperimentalWarning-Meldungen von Node selbst
+ * aus, unabhaengig davon, wie wir die Bibliothek nutzen.
+ *
+ * Ein process.on('warning', ...)-Listener reicht dafuer NICHT: Node haengt
+ * seinen eigenen stderr-Printer schon beim Bootstrap an dasselbe Event, und
+ * der laeuft unabhaengig von jedem eigenen Listener weiter. Nur ein
+ * Abfangen vor der Event-Emission — also am emitWarning-Aufruf selbst —
+ * unterdrueckt die Ausgabe tatsaechlich. Alles andere geht unveraendert an
+ * die urspruengliche Funktion durch.
+ */
+const originalEmitWarning = process.emitWarning.bind(process);
+process.emitWarning = function (warning, typeOrOptions, ...rest) {
+    const message = typeof warning === 'string' ? warning : warning?.message;
+    const type = typeof typeOrOptions === 'string' ? typeOrOptions : typeOrOptions?.type;
+    if (type === 'ExperimentalWarning' && /Web Crypto API|ML-DSA/.test(message ?? '')) {
+        return;
+    }
+    return originalEmitWarning(warning, typeOrOptions, ...rest);
+};
+
 const express = require('express');
 const multer = require('multer');
 const session = require('express-session');
@@ -9,14 +33,24 @@ const crypto = require('crypto');
 const fsp = require('fs/promises');
 const path = require('path');
 
-const { safeIsoName, safeUploadId } = require('./lib/safe-name');
+const {
+    safeIsoName, safeUploadId, safeCredentialId, safePasskeyLabel, safeUsername,
+} = require('./lib/safe-name');
 const { moveFile } = require('./lib/move-file');
 const { createMetadataStore } = require('./lib/metadata');
 const { createHashQueue } = require('./lib/hash-queue');
 const { createUploadSessions, UploadError } = require('./lib/chunked-upload');
 const { FileSessionStore } = require('./lib/session-store');
+const { createWebauthnStore } = require('./lib/webauthn-store');
+const { createPasswordStore } = require('./lib/password-store');
+const { createUsernameStore } = require('./lib/username-store');
+const {
+    generateRegistrationOptions, verifyRegistrationResponse,
+    generateAuthenticationOptions, verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
 
 const DEFAULT_MAX_FILE_SIZE_MB = 8192;
+const DEFAULT_ADMIN_USERNAME = 'admin';
 const STALE_UPLOAD_SWEEP_MS = 60 * 60 * 1000;
 
 /* ==========================================================================
@@ -39,6 +73,7 @@ function createApp(options = {}) {
         trustProxy = process.env.TRUST_PROXY,
         // Tests uebergeben beides direkt und loesen so keine Warnung aus
         adminPassword: passwordOption,
+        adminUsername: usernameOption,
         sessionSecret: secretOption,
         // Der Startscan liest jede Datei in uploads/ einmal durch — im Test
         // unerwuenscht, im Betrieb genau richtig.
@@ -53,23 +88,20 @@ function createApp(options = {}) {
     const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
     /* ----------------------------------------------------------- Secrets --
-       Kein funktionsfaehiger Default. Ist nichts gesetzt, wird ein
-       zufaelliges Passwort erzeugt und EINMAL geloggt, statt auf ein im Repo
-       bekanntes zurueckzufallen. */
+       Kein funktionsfaehiger Default. Ist ADMIN_PASSWORD gesetzt, bleibt es
+       die feste, vom Betreiber gewaehlte Quelle (SHA-256 vorab, damit der
+       Vergleich zeitkonstant und unabhaengig von der Laenge laeuft). Ist es
+       NICHT gesetzt, wird kein Passwort synchron erzeugt — das passiert erst
+       async in start() und dann nur EINMAL: dort wird geprueft, ob schon ein
+       Passwort im persistenten Store (lib/password-store.js) liegt, und nur
+       wenn nicht, eines erzeugt, dort gespeichert und geloggt. Ohne dieses
+       Umleiten ueber den Store waere das generierte Passwort bei jedem
+       Neustart ein anderes — das Gegenteil von "fest". */
 
     let ADMIN_PASSWORD = passwordOption ?? process.env.ADMIN_PASSWORD;
-    if (!ADMIN_PASSWORD) {
-        ADMIN_PASSWORD = crypto.randomBytes(18).toString('base64url');
-        log.warn(
-            '\n⚠️  ADMIN_PASSWORD ist nicht gesetzt. Einmalig generiertes Passwort:\n' +
-            `    ${ADMIN_PASSWORD}\n` +
-            '    Setze ADMIN_PASSWORD als Umgebungsvariable, um ein festes zu verwenden.\n'
-        );
-    }
-
-    // SHA-256 des Passworts einmal vorab, damit der Vergleich zeitkonstant und
-    // unabhaengig von der Laenge laeuft.
-    const PASSWORD_HASH = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+    const PASSWORD_HASH = ADMIN_PASSWORD
+        ? crypto.createHash('sha256').update(ADMIN_PASSWORD).digest()
+        : null;
 
     let SESSION_SECRET = secretOption ?? process.env.SESSION_SECRET;
     if (!SESSION_SECRET) {
@@ -80,7 +112,35 @@ function createApp(options = {}) {
         );
     }
 
-    function passwordMatches(candidate) {
+    const passwordStore = createPasswordStore({
+        file: path.join(path.dirname(sessionDir), 'admin-password.json'),
+    });
+
+    /*
+     * Anders als das Passwort ist ein Benutzername kein Geheimnis: kein
+     * Zufalls-Bootstrap noetig, der Default 'admin' ist schon ueber
+     * Neustarts hinweg deterministisch fix. Der Store wird erst durch einen
+     * expliziten Aufruf von /admin-username befuellt.
+     */
+    const ADMIN_USERNAME = usernameOption ?? process.env.ADMIN_USERNAME ?? DEFAULT_ADMIN_USERNAME;
+    const usernameStore = createUsernameStore({
+        file: path.join(path.dirname(sessionDir), 'admin-username.json'),
+    });
+
+    /*
+     * Ein einmal ueber /admin-password gesetztes (oder beim ersten Start
+     * automatisch erzeugtes, siehe start()) Passwort gewinnt dauerhaft
+     * gegenueber ADMIN_PASSWORD, auch nach einem Neustart. Ohne persistierten
+     * Hash bleibt der Weg ueber PASSWORD_HASH bestehen — der greift aber nur,
+     * wenn ADMIN_PASSWORD tatsaechlich vom Betreiber gesetzt wurde; ist beides
+     * leer (start() ist noch nicht gelaufen, oder dessen Schreibversuch ist
+     * fehlgeschlagen), wird sicherheitshalber jeder Login abgelehnt statt
+     * gegen nichts zu vergleichen.
+     */
+    async function passwordMatches(candidate) {
+        const record = await passwordStore.read();
+        if (record) return passwordStore.verify(candidate, record);
+        if (!PASSWORD_HASH) return false;
         const candidateHash = crypto
             .createHash('sha256')
             .update(String(candidate ?? ''))
@@ -100,6 +160,7 @@ function createApp(options = {}) {
         maxBytes: MAX_FILE_SIZE_BYTES,
     });
     const sessionStore = new FileSessionStore({ dir: sessionDir });
+    const webauthnStore = createWebauthnStore({ dir: path.join(UPLOADS_DIR, '.meta') });
 
     const app = express();
 
@@ -218,6 +279,22 @@ function createApp(options = {}) {
         }
         next();
     });
+
+    /*
+     * WebAuthn braucht pro Anfrage eine Relying-Party-ID (der Hostname ohne
+     * Port) und die exakte Origin, gegen die Attestation/Assertion geprueft
+     * werden. Statt einer eigenen Env-Var wird das aus denselben Angaben
+     * abgeleitet, die schon sameOrigin() fuer den CSRF-Check nutzt — und
+     * respektiert damit automatisch 'trust proxy' wie der secure-Flag des
+     * Session-Cookies. Bekannte Einschraenkung: ein Passkey ist an den
+     * Hostnamen gebunden, unter dem er registriert wurde; Zugriff ueber
+     * einen zweiten Hostnamen (z. B. IP statt DNS-Name) braucht einen
+     * eigenen Passkey.
+     */
+    function rpIdAndOrigin(req) {
+        const host = req.get('host');
+        return { rpID: host.split(':')[0], expectedOrigin: `${req.protocol}://${host}` };
+    }
 
     /* ------------------------------------------------------ Rate-Limits -- */
 
@@ -420,8 +497,16 @@ function createApp(options = {}) {
         res.render('login', { error: null });
     });
 
-    app.post('/login', loginLimiterGlobal, loginLimiterPerIp, (req, res) => {
-        if (passwordMatches(req.body.password)) {
+    app.post('/login', loginLimiterGlobal, loginLimiterPerIp, async (req, res) => {
+        const submittedUsername = String(req.body.username ?? '').trim();
+        const storedUsername = (await usernameStore.read()) ?? ADMIN_USERNAME;
+        // passwordMatches() immer auswerten, auch bei falschem Benutzernamen
+        // — sonst wuerde die Antwortzeit verraten, ob der Benutzername
+        // allein schon gestimmt hat.
+        const passwordOk = await passwordMatches(req.body.password);
+        const usernameOk = submittedUsername.length > 0 && submittedUsername === storedUsername;
+
+        if (usernameOk && passwordOk) {
             // Session-ID nach erfolgreichem Login neu vergeben (Fixation)
             req.session.regenerate(err => {
                 if (err) {
@@ -432,7 +517,9 @@ function createApp(options = {}) {
                 res.redirect('/admin-upload');
             });
         } else {
-            res.status(401).render('login', { error: 'Falsches Passwort!' });
+            // Bewusst generisch — sonst liesse sich per Antwort erraten, ob
+            // schon der Benutzername stimmte (Username-Enumeration).
+            res.status(401).render('login', { error: 'Benutzername oder Passwort falsch.' });
         }
     });
 
@@ -441,9 +528,247 @@ function createApp(options = {}) {
             res.render('admin', {
                 files: await listFiles(),
                 maxFileSizeMb: MAX_FILE_SIZE_MB,
+                passkeys: await webauthnStore.listCredentials(),
+                passwordError: null,
+                usernameError: null,
+                currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
             });
         } catch (err) {
             next(err);
+        }
+    });
+
+    /*
+     * Bewusst ohne erneute Eingabe des alten Passworts — eine gueltige
+     * Sitzung (egal ob per Passwort oder Passkey zustandegekommen) gilt als
+     * Nachweis, dasselbe Vertrauensmodell wie bei der Passkey-Registrierung
+     * oben. Wer das Sitzungscookie hat, hat ohnehin schon vollen
+     * Admin-Zugriff — das alte Passwort zusaetzlich abzufragen wuerde
+     * keinen Angriff verhindern, aber genau den Fall blockieren, fuer den
+     * diese Route gedacht ist: das Passwort vergessen zu haben.
+     */
+    const MIN_PASSWORD_LENGTH = 8;
+
+    // JS-Client schickt Accept: application/json und bekommt eine JSON-
+    // Rueckmeldung fuer das Modal (public/js/account-forms.js); ohne JS
+    // bleibt der bisherige Form-Submit-Weg (Redirect bzw. Inline-Fehler)
+    // unveraendert. Dieselbe Logik gilt fuer /admin-username unten.
+    app.post('/admin-password', checkAuth, async (req, res, next) => {
+        const wantsJson = req.accepts(['html', 'json']) === 'json';
+        const password = String(req.body.password ?? '');
+        const confirmPassword = String(req.body.confirmPassword ?? '');
+        const error =
+            password.length < MIN_PASSWORD_LENGTH
+                ? `Das Passwort muss mindestens ${MIN_PASSWORD_LENGTH} Zeichen lang sein.`
+                : password !== confirmPassword
+                    ? 'Die Passwörter stimmen nicht überein.'
+                    : null;
+
+        if (error) {
+            if (wantsJson) return res.status(400).json({ error });
+            try {
+                return res.status(400).render('admin', {
+                    files: await listFiles(),
+                    maxFileSizeMb: MAX_FILE_SIZE_MB,
+                    passkeys: await webauthnStore.listCredentials(),
+                    passwordError: error,
+                    usernameError: null,
+                    currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
+                });
+            } catch (err) {
+                return next(err);
+            }
+        }
+
+        try {
+            await passwordStore.setPassword(password);
+            if (wantsJson) return res.json({ ok: true });
+            res.redirect('/admin-upload');
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/admin-username', checkAuth, async (req, res, next) => {
+        const wantsJson = req.accepts(['html', 'json']) === 'json';
+        const username = safeUsername(req.body.username);
+
+        if (!username) {
+            const error = 'Ungültiger Benutzername (1–64 Zeichen, keine Leerzeichen).';
+            if (wantsJson) return res.status(400).json({ error });
+            try {
+                return res.status(400).render('admin', {
+                    files: await listFiles(),
+                    maxFileSizeMb: MAX_FILE_SIZE_MB,
+                    passkeys: await webauthnStore.listCredentials(),
+                    passwordError: null,
+                    usernameError: error,
+                    currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
+                });
+            } catch (err) {
+                return next(err);
+            }
+        }
+
+        try {
+            await usernameStore.write(username);
+            if (wantsJson) return res.json({ ok: true });
+            res.redirect('/admin-upload');
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /* ------------------------------------------------- WebAuthn/Passkeys --
+       Registrierung nur fuer bereits angemeldete Admins (checkAuth) — es
+       gibt bewusst keinen separaten Bootstrap-Flow, der erste Passkey wird
+       immer per Passwort-Login freigeschaltet. Die Login-Routen sind
+       oeffentlich, teilen sich aber dieselben Rate-Limiter-Instanzen wie
+       /login: ein Angreifer kann sein Budget nicht verdoppeln, indem er
+       zwischen Passwort- und Passkey-Versuchen wechselt. */
+
+    const PASSKEY_LOGIN_FAILED = { error: 'Anmeldung fehlgeschlagen.' };
+
+    app.post('/webauthn/register/options', checkAuth, async (req, res, next) => {
+        try {
+            const { rpID } = rpIdAndOrigin(req);
+            const userId = await webauthnStore.getOrCreateUserId();
+            const existing = await webauthnStore.listCredentials();
+            const options = await generateRegistrationOptions({
+                rpName: 'ISO Share',
+                rpID,
+                userName: 'admin',
+                userID: Buffer.from(userId, 'base64url'),
+                attestationType: 'none',
+                excludeCredentials: existing.map(c => ({
+                    id: c.credentialId, transports: c.transports,
+                })),
+                authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+            });
+            req.session.webauthnChallenge = options.challenge;
+            res.json(options);
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/webauthn/register/verify', checkAuth, async (req, res) => {
+        const expectedChallenge = req.session.webauthnChallenge;
+        if (!expectedChallenge) {
+            return res.status(400).json({ error: 'Keine offene Registrierung.' });
+        }
+        const label = safePasskeyLabel(req.body.label)
+            ?? `Passkey (${app.locals.formatDate(Date.now())})`;
+        try {
+            const { rpID, expectedOrigin } = rpIdAndOrigin(req);
+            const verification = await verifyRegistrationResponse({
+                response: req.body.credential,
+                expectedChallenge,
+                expectedOrigin,
+                expectedRPID: rpID,
+            });
+            if (!verification.verified) {
+                return res.status(400).json({ error: 'Registrierung fehlgeschlagen.' });
+            }
+            const { credential } = verification.registrationInfo;
+            await webauthnStore.addCredential({
+                credentialId: credential.id,
+                publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+                counter: credential.counter,
+                transports: credential.transports ?? [],
+                label,
+            });
+            res.status(201).json({ ok: true });
+        } catch (err) {
+            log.error('WebAuthn Registrierung fehlgeschlagen:', err);
+            res.status(400).json({ error: 'Registrierung fehlgeschlagen.' });
+        } finally {
+            delete req.session.webauthnChallenge;
+        }
+    });
+
+    app.get('/webauthn/credentials', checkAuth, async (req, res, next) => {
+        try {
+            res.json(await webauthnStore.listCredentials());
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.delete('/webauthn/credentials/:id', checkAuth, async (req, res) => {
+        const id = safeCredentialId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Credential-ID.' });
+        const removed = await webauthnStore.removeCredential(id);
+        res.status(removed ? 204 : 404).end();
+    });
+
+    app.post('/webauthn/login/options', loginLimiterGlobal, loginLimiterPerIp, async (req, res, next) => {
+        try {
+            const { rpID } = rpIdAndOrigin(req);
+            const existing = await webauthnStore.listCredentials();
+            const options = await generateAuthenticationOptions({
+                rpID,
+                allowCredentials: existing.map(c => ({
+                    id: c.credentialId, transports: c.transports,
+                })),
+                userVerification: 'preferred',
+            });
+            // saveUninitialized:false verhindert nur, dass eine UNVERAENDERTE
+            // Session gespeichert wird. Sobald hier eine Property gesetzt
+            // wird, gilt die Session als modifiziert und wird trotzdem
+            // gespeichert — auch ganz ohne vorherige Anmeldung.
+            req.session.webauthnChallenge = options.challenge;
+            res.json(options);
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/webauthn/login/verify', loginLimiterGlobal, loginLimiterPerIp, async (req, res) => {
+        const expectedChallenge = req.session.webauthnChallenge;
+        if (!expectedChallenge) {
+            return res.status(400).json({ error: 'Keine offene Anmeldung.' });
+        }
+        const credentialId = safeCredentialId(req.body?.credential?.id);
+        const stored = credentialId ? await webauthnStore.findCredential(credentialId) : null;
+        if (!stored) {
+            delete req.session.webauthnChallenge;
+            return res.status(401).json({ error: 'Unbekannter Passkey.' });
+        }
+        try {
+            const { rpID, expectedOrigin } = rpIdAndOrigin(req);
+            const verification = await verifyAuthenticationResponse({
+                response: req.body.credential,
+                expectedChallenge,
+                expectedOrigin,
+                expectedRPID: rpID,
+                credential: {
+                    id: stored.credentialId,
+                    publicKey: Buffer.from(stored.publicKey, 'base64url'),
+                    counter: stored.counter,
+                    transports: stored.transports,
+                },
+            });
+            if (!verification.verified) {
+                delete req.session.webauthnChallenge;
+                return res.status(401).json(PASSKEY_LOGIN_FAILED);
+            }
+            await webauthnStore.updateCounter(stored.credentialId, verification.authenticationInfo.newCounter);
+            // Session-ID nach erfolgreichem Login neu vergeben (Fixation) —
+            // dasselbe Muster wie /login. regenerate() ersetzt die Session
+            // komplett, die Challenge wird damit automatisch entsorgt.
+            req.session.regenerate(err => {
+                if (err) {
+                    log.error('Session regenerate error:', err);
+                    return res.status(500).json({ error: 'Serverfehler.' });
+                }
+                req.session.loggedIn = true;
+                res.json({ ok: true, redirect: '/admin-upload' });
+            });
+        } catch (err) {
+            log.error('WebAuthn Anmeldung fehlgeschlagen:', err);
+            delete req.session.webauthnChallenge;
+            res.status(401).json(PASSKEY_LOGIN_FAILED);
         }
     });
 
@@ -626,6 +951,10 @@ function createApp(options = {}) {
                 files: await listFiles(query),
                 searchQuery: query,
                 maxFileSizeMb: MAX_FILE_SIZE_MB,
+                passkeys: await webauthnStore.listCredentials(),
+                passwordError: null,
+                usernameError: null,
+                currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
             });
         } catch (err) {
             next(err);
@@ -661,6 +990,27 @@ function createApp(options = {}) {
     async function start() {
         await fsp.mkdir(UPLOADS_DIR, { recursive: true });
         await fsp.mkdir(TMP_DIR, { recursive: true });
+
+        // Kein ADMIN_PASSWORD gesetzt: einmalig ein zufaelliges Passwort
+        // erzeugen und SOFORT persistieren, statt es nur im Speicher zu
+        // halten. Existiert schon ein gespeichertes (aus einem frueheren
+        // Start oder ueber /admin-password geaendert), bleibt das bestehen
+        // — sonst waere das Passwort bei jedem Neustart ein anderes.
+        if (!ADMIN_PASSWORD) {
+            const existing = await passwordStore.read();
+            if (!existing) {
+                const generated = crypto.randomBytes(18).toString('base64url');
+                await passwordStore.setPassword(generated);
+                log.warn(
+                    '\n⚠️  Kein ADMIN_PASSWORD gesetzt. Einmalig generiertes Passwort ' +
+                    `(dauerhaft gespeichert in ${passwordStore.file}):\n` +
+                    `    ${generated}\n` +
+                    '    Wird bei einem Neustart NICHT erneut angezeigt. Ändern jederzeit\n' +
+                    '    unter /admin-upload, oder ADMIN_PASSWORD als Umgebungsvariable setzen.\n'
+                );
+            }
+        }
+
         await uploadSessions.cleanupStale().catch(() => {});
         if (scanOnStart) {
             const missing = await hashQueue.scanAll();
@@ -674,7 +1024,8 @@ function createApp(options = {}) {
     async function stop() {
         timers.forEach(clearInterval);
         sessionStore.close();
-        await Promise.all([metadata.flush(), sessionStore.settled()]);
+        webauthnStore.close();
+        await Promise.all([metadata.flush(), sessionStore.settled(), webauthnStore.flush()]);
     }
 
     return {
@@ -682,7 +1033,10 @@ function createApp(options = {}) {
         start,
         stop,
         // fuer Tests und /healthz
-        services: { metadata, hashQueue, uploadSessions, sessionStore, listFiles },
+        services: {
+            metadata, hashQueue, uploadSessions, sessionStore,
+            webauthnStore, passwordStore, usernameStore, listFiles,
+        },
     };
 }
 

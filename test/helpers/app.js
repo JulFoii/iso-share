@@ -46,13 +46,14 @@ async function startTestApp(overrides = {}) {
 
         url: pathname => base + pathname,
 
-        /* Loggt sich ein und gibt den Cookie-Header zurueck. */
-        async login(password = 'korrekt-horse-battery') {
+        /* Loggt sich ein und gibt den Cookie-Header zurueck. Default-
+           Benutzername passt zu DEFAULT_ADMIN_USERNAME in server.js. */
+        async login(password = 'korrekt-horse-battery', username = 'admin') {
             const res = await fetch(`${base}/login`, {
                 method: 'POST',
                 redirect: 'manual',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({ password }).toString(),
+                body: new URLSearchParams({ username, password }).toString(),
             });
             const cookie = (res.headers.getSetCookie() || [])
                 .map(value => value.split(';')[0])

@@ -16,6 +16,9 @@ ISO Share is a minimalistic web application for secure sharing and management of
 - **`lib/chunked-upload.js`**: the resumable-upload protocol (`POST /upload/init`, `PATCH /upload/:id`, `POST /upload/:id/finish`, `DELETE /upload/:id`). The `.part` file's on-disk size *is* the offset — the client never tracks progress itself, it re-reads the server's offset after any network error. A `PATCH` whose `Upload-Offset` header doesn't match the real offset is rejected with 409 and the true offset, so the client resyncs instead of corrupting the file
 - **`lib/session-store.js`**: `FileSessionStore`, a small `express-session` store (one JSON file per session under `data/sessions/`, write-through cache so a client following the login redirect never race-loses against the not-yet-flushed file). Replaces the default `MemoryStore`, which lost every session on restart
 - **`lib/move-file.js`**: `rename()` with a `copyFile`+`rm` fallback for `EXDEV`, shared by both the multipart and the chunked-upload finish path
+- **`lib/webauthn-store.js`**: single-record JSON store (`uploads/.meta/webauthn.json`) for the admin's registered passkeys plus the one stable WebAuthn `userId`; verification itself is `@simplewebauthn/server` (the one deliberate exception to this project's short-dependency-list rule — the crypto involved is too easy to get subtly wrong by hand)
+- **`lib/password-store.js`**: optional, persisted admin password as a `scrypt` hash in `data/admin-password.json` (Node's built-in `crypto.scrypt`, no dependency). Absent by default — `ADMIN_PASSWORD` stays authoritative until the admin changes the password via `/admin-password`, after which the persisted hash wins permanently, surviving restarts, even if `ADMIN_PASSWORD` is still set
+- **`lib/username-store.js`**: same idea as the password store but for the login username, and much simpler since a username isn't a secret — no hashing, no bootstrap, just plaintext JSON in `data/admin-username.json`. Default is `admin` (`ADMIN_USERNAME` env var or `/admin-username` override it). Only the password-based `/login` form asks for it; passkey login stays username-less since the credential already identifies the one admin account
 - **Express-based**: Uses Express.js with EJS templating for server-side rendering
 - **Session-based auth**: Simple password authentication with express-session, session state persisted via `FileSessionStore` (see above)
 - **File management**: multipart upload (`/upload`, no-JS fallback) and a resumable chunked-upload protocol (`/upload/init` + friends, what `upload.js` actually uses) both land in `uploads/` through `lib/move-file.js`
@@ -50,7 +53,7 @@ npm test
 ### File Operations
 - Files are stored in the `uploads/` directory; per-file metadata (checksum, ISO info, download count) lives alongside in `uploads/.meta/`
 - Only `.iso` files are accepted for upload
-- Admin password comes from `ADMIN_PASSWORD`; if unset, a random one is generated and logged once at startup (no hardcoded default). `SESSION_SECRET` likewise falls back to a random per-start value
+- Admin password comes from `ADMIN_PASSWORD`; if unset, a random one is generated **once** on the very first `start()` and persisted to `data/admin-password.json` (not regenerated on every restart — only logged that one time, so note it down or change it right away). `SESSION_SECRET` still falls back to a random per-start value (unrelated: it signs cookies, not the password). The password can be changed from the admin area (`/admin-password`, no re-entry of the old one needed — a valid session, password- or passkey-based, is proof enough); once changed (or auto-generated), the persisted hash in `data/admin-password.json` wins over `ADMIN_PASSWORD` from then on. Delete that file to fall back to the env var again
 - `MAX_FILE_SIZE_MB` (default 8192) caps both the multipart and the chunked-upload path
 - `SESSION_DIR` (default `data/sessions/`) is where `FileSessionStore` persists sessions — mount this as a volume in Docker, not `/tmp`
 
@@ -59,8 +62,10 @@ npm test
 - `/` - Public file listing with search and download
 - `/checksums` - `SHA256SUMS` (coreutils format) for every file with a current checksum
 - `/healthz` - liveness endpoint for the Docker healthcheck; deliberately not `/`, which would render the whole listing every 30s
-- `/login` - Admin authentication
-- `/admin-upload` - Protected admin area for file management
+- `/login` - Admin authentication (password, plus an optional passkey via `/webauthn/login/options` + `/webauthn/login/verify`, same rate limiters as the password form)
+- `/admin-upload` - Protected admin area for file management, including passkey registration (`/webauthn/register/options` + `/webauthn/register/verify`) and management (`GET`/`DELETE /webauthn/credentials`)
+- `/admin-password` - Change the admin password (admin only, no old-password re-entry — see `lib/password-store.js`)
+- `/admin-username` - Change the admin username (admin only, used by the password login form; not by passkey login — see `lib/username-store.js`)
 - `/upload` - Multipart file upload endpoint, admin only (no-JS fallback; `upload.js` prefers the chunked protocol below)
 - `/upload/init`, `/upload/:id` (GET/PATCH/DELETE), `/upload/:id/finish` - Resumable chunked-upload protocol, admin only (see `lib/chunked-upload.js`)
 - `/delete` - File deletion endpoint (admin only), also removes the metadata sidecar
@@ -72,6 +77,7 @@ npm test
 - `views/admin.ejs` - Admin file management page  
 - `views/login.ejs` - Authentication page
 - `views/partials/file-row.ejs` - One file's table row + detail row, shared by index and admin
+- `views/partials/passkey-row.ejs` - One registered passkey's list row on the admin page
 
 All views use the hand-rolled `public/css/` design system described above — no Bootstrap, no CDN.
 
@@ -89,3 +95,6 @@ All views use the hand-rolled `public/css/` design system described above — no
 - **All request-path filesystem access is async** (`fs/promises`); no `*Sync` call runs inside a handler, so a large `uploads/` can't block the event loop. The upload move uses `rename` with a `copyFile`+`rm` fallback for `EXDEV` (temp dir and `uploads/` on different mounts, e.g. a Docker bind mount) — see `lib/move-file.js`
 - **Login brute-force** is capped two ways: per-IP (`express-rate-limit`, failures only) and a global backstop keyed to a constant, so a spoofed `X-Forwarded-For` (when `TRUST_PROXY` is set without a real proxy) can't mint fresh buckets. Only enable `TRUST_PROXY` behind a proxy that overwrites `X-Forwarded-For`
 - **Chunked-upload protocol**: a `PATCH` is only accepted when its `Upload-Offset` header equals the session's real on-disk offset, and the server never writes more bytes than the size announced at `init` — both close off ways a client could otherwise corrupt or oversize the assembled file
+- **Passkeys**: additive, not a replacement — the password form is always the fallback. A passkey can only be registered by an already-authenticated admin (no separate bootstrap route); `/webauthn/login/options` and `/webauthn/login/verify` are public but share the exact same `loginLimiterGlobal`/`loginLimiterPerIp` instances as `/login`, so an attacker can't double their brute-force budget by alternating routes. `rpID`/`expectedOrigin` are derived per-request from `req.get('host')`/`req.protocol` (same inputs as the CSRF `sameOrigin` check) rather than a separate env var — a passkey is therefore bound to the hostname it was registered under
+- **Password change** (`/admin-password`): checkAuth-gated only, deliberately without re-entering the current password — the whole point is recovering from a forgotten one, and a valid session already implies full admin access regardless. Hashed with `scrypt` (salted, promisified so it doesn't block the event loop), not the plain `SHA-256` used for the `ADMIN_PASSWORD` env-var comparison — that one is fine unsalted since it's not user-chosen/persisted, but a user-settable password gets the stronger, deliberately slow KDF
+- **Username check** (`/login`): a wrong username and a wrong password get the exact same generic error ("Benutzername oder Passwort falsch") — distinguishing them would let an attacker enumerate the username. `passwordMatches()` is always awaited even when the username is already known to be wrong, so a mismatched username can't be inferred from a faster response. Both `/admin-password` and `/admin-username` share the same async-form + `<dialog>`-modal pattern in `public/js/account-forms.js`, with a plain-form no-JS fallback (inline error / silent redirect) preserved for both

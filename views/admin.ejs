@@ -167,11 +167,179 @@
           </div>
         <% } %>
       </section>
+
+      <!-- Passkeys -->
+      <section class="card reveal" aria-labelledby="passkeys-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="passkeys-heading">Passkeys</h2>
+        </div>
+        <div class="card__body">
+          <ul class="stack" id="passkeyList">
+            <% passkeys.forEach(passkey => { %>
+              <%- include('partials/passkey-row', { passkey }) %>
+            <% }); %>
+            <% if (passkeys.length === 0) { %>
+              <li class="empty" data-passkey-empty>
+                <p class="empty__title">Keine Passkeys</p>
+                <p class="empty__text">Füge einen Passkey hinzu, um dich künftig ohne Passwort anzumelden.</p>
+              </li>
+            <% } %>
+          </ul>
+          <div class="row mt-4">
+            <button type="button" class="btn btn--secondary" id="passkeyAddButton" hidden>Passkey hinzufügen</button>
+            <span class="hint" id="passkeyUnsupportedHint">Dieser Browser unterstützt keine Passkeys.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin-Benutzername -->
+      <section class="card reveal" aria-labelledby="username-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="username-heading">Admin-Benutzername</h2>
+        </div>
+        <div class="card__body">
+          <% if (usernameError) { %>
+            <div class="alert alert--danger mb-4" role="alert">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span><%= usernameError %></span>
+            </div>
+          <% } %>
+
+          <form class="stack" id="usernameForm" method="POST" action="/admin-username">
+            <div class="field">
+              <label class="label" for="usernameInput">Benutzername</label>
+              <input
+                class="input"
+                type="text"
+                id="usernameInput"
+                name="username"
+                value="<%= currentUsername %>"
+                maxlength="64"
+                required>
+            </div>
+
+            <div class="row">
+              <button type="submit" class="btn btn--secondary">Benutzername ändern</button>
+              <span class="hint">Gilt sofort für neue Anmeldungen; bestehende Sitzungen bleiben angemeldet.</span>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Admin-Passwort -->
+      <section class="card reveal" aria-labelledby="password-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="password-heading">Admin-Passwort</h2>
+        </div>
+        <div class="card__body">
+          <% if (passwordError) { %>
+            <div class="alert alert--danger mb-4" role="alert">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span><%= passwordError %></span>
+            </div>
+          <% } %>
+
+          <form class="stack" id="passwordForm" method="POST" action="/admin-password">
+            <div class="field">
+              <label class="label" for="newPassword">Neues Passwort</label>
+              <div class="password">
+                <input
+                  class="input"
+                  type="password"
+                  id="newPassword"
+                  name="password"
+                  autocomplete="new-password"
+                  minlength="8"
+                  required>
+                <button
+                  type="button"
+                  class="password__toggle"
+                  data-password-toggle="newPassword"
+                  aria-label="Passwort anzeigen">
+                  <svg data-password-icon="show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  <svg data-password-icon="hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                    <path d="M4 4l16 16"/>
+                    <path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.5 7.3A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 3.9-.8"/>
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="label" for="confirmPassword">Passwort bestätigen</label>
+              <div class="password">
+                <input
+                  class="input"
+                  type="password"
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  autocomplete="new-password"
+                  minlength="8"
+                  required>
+                <button
+                  type="button"
+                  class="password__toggle"
+                  data-password-toggle="confirmPassword"
+                  aria-label="Passwort anzeigen">
+                  <svg data-password-icon="show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  <svg data-password-icon="hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                    <path d="M4 4l16 16"/>
+                    <path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.5 7.3A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 3.9-.8"/>
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="row">
+              <button type="submit" class="btn btn--secondary">Passwort ändern</button>
+              <span class="hint">Gilt sofort für neue Anmeldungen; bestehende Sitzungen bleiben angemeldet.</span>
+            </div>
+          </form>
+        </div>
+      </section>
     </div>
   </div>
 </main>
 
 <%- include('partials/footer') %>
+
+<dialog class="dialog" id="usernameResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title" data-result-title>Benutzername geändert</h2>
+      <p class="dialog__text" data-result-text></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="passwordResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title" data-result-title>Passwort geändert</h2>
+      <p class="dialog__text" data-result-text></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">OK</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog class="dialog" id="deleteDialog">
   <form method="POST" action="/delete">
@@ -197,5 +365,8 @@
 <script src="/js/row-details.js" defer></script>
 <script src="/js/copy.js" defer></script>
 <script src="/js/upload.js" defer></script>
+<script src="/js/webauthn.js" defer></script>
+<script src="/js/password-toggle.js" defer></script>
+<script src="/js/account-forms.js" defer></script>
 </body>
 </html>

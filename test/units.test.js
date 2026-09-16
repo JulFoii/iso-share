@@ -18,6 +18,10 @@ const { createMetadataStore } = require('../lib/metadata');
 const { createHashQueue } = require('../lib/hash-queue');
 const { createUploadSessions } = require('../lib/chunked-upload');
 const { FileSessionStore } = require('../lib/session-store');
+const { createWebauthnStore } = require('../lib/webauthn-store');
+const { createPasswordStore } = require('../lib/password-store');
+const { createUsernameStore } = require('../lib/username-store');
+const { safeCredentialId, safePasskeyLabel, safeUsername } = require('../lib/safe-name');
 const { makeIso } = require('./helpers/make-iso');
 
 async function tempDir() {
@@ -62,6 +66,30 @@ test('safeUploadId akzeptiert nur UUIDs', () => {
     assert.equal(safeUploadId(crypto.randomUUID()).length, 36);
     for (const input of ['../x', 'abc', '', null, '../../etc/passwd']) {
         assert.equal(safeUploadId(input), null);
+    }
+});
+
+test('safeCredentialId akzeptiert nur base64url', () => {
+    assert.equal(safeCredentialId('abcDEF012_-'), 'abcDEF012_-');
+    for (const input of ['../x', 'abc+def', 'abc/def', 'abc=', '', null, 'a'.repeat(513)]) {
+        assert.equal(safeCredentialId(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
+    }
+});
+
+test('safePasskeyLabel trimmt und begrenzt', () => {
+    assert.equal(safePasskeyLabel('  Windows Hello  '), 'Windows Hello');
+    assert.equal(safePasskeyLabel('YubiKey (Büro)'), 'YubiKey (Büro)');
+    for (const input of ['', '   ', null, 'a'.repeat(65), '<script>']) {
+        assert.equal(safePasskeyLabel(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
+    }
+});
+
+test('safeUsername akzeptiert Identifier ohne Leerzeichen', () => {
+    assert.equal(safeUsername('  admin  '), 'admin');
+    assert.equal(safeUsername('julian.foitzik'), 'julian.foitzik');
+    assert.equal(safeUsername('admin@example.com'), 'admin@example.com');
+    for (const input of ['', '   ', null, 'a'.repeat(65), 'mit leerzeichen', '<script>']) {
+        assert.equal(safeUsername(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
     }
 });
 
@@ -426,5 +454,189 @@ test('prune entfernt abgelaufene Sitzungsdateien', async () => {
     assert.equal(await promisify(store.length).bind(store)(), 1);
 
     store.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ========================================================= webauthn-store */
+
+test('getOrCreateUserId ist stabil, auch ueber Instanzen hinweg', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+
+    const id = await store.getOrCreateUserId();
+    assert.equal(await store.getOrCreateUserId(), id);
+
+    const restarted = createWebauthnStore({ dir });
+    assert.equal(await restarted.getOrCreateUserId(), id);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('addCredential/findCredential geben alle Felder unveraendert zurueck', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+
+    await store.addCredential({
+        credentialId: 'cred-1',
+        publicKey: 'cHVia2V5',
+        counter: 0,
+        transports: ['internal'],
+        label: 'Windows Hello',
+    });
+
+    const found = await store.findCredential('cred-1');
+    assert.equal(found.credentialId, 'cred-1');
+    assert.equal(found.publicKey, 'cHVia2V5');
+    assert.equal(found.counter, 0);
+    assert.deepEqual(found.transports, ['internal']);
+    assert.equal(found.label, 'Windows Hello');
+    assert.equal(typeof found.createdAt, 'number');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('addCredential wirft bei doppelter credentialId', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+    await store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'A' });
+    await assert.rejects(() =>
+        store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'B' })
+    );
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('listCredentials enthaelt nie den publicKey', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+    await store.addCredential({ credentialId: 'x', publicKey: 'geheim', counter: 0, label: 'A' });
+
+    const list = await store.listCredentials();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].credentialId, 'x');
+    assert.equal('publicKey' in list[0], false);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('updateCounter persistiert, removeCredential entfernt', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+    await store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'A' });
+
+    await store.updateCounter('x', 5);
+    assert.equal((await store.findCredential('x')).counter, 5);
+
+    assert.equal(await store.removeCredential('nicht-vorhanden'), false);
+    assert.equal(await store.removeCredential('x'), true);
+    assert.equal(await store.findCredential('x'), null);
+    assert.deepEqual(await store.listCredentials(), []);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('kaputte/fehlende webauthn.json gilt als "keine Passkeys"', async () => {
+    const dir = await tempDir();
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, 'webauthn.json'), '{ kein json');
+
+    const store = createWebauthnStore({ dir });
+    assert.deepEqual(await store.listCredentials(), []);
+    assert.equal(typeof (await store.getOrCreateUserId()), 'string');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('parallele addCredential-Aufrufe landen beide', async () => {
+    const dir = await tempDir();
+    const store = createWebauthnStore({ dir });
+
+    await Promise.all([
+        store.addCredential({ credentialId: 'a', publicKey: 'k', counter: 0, label: 'A' }),
+        store.addCredential({ credentialId: 'b', publicKey: 'k', counter: 0, label: 'B' }),
+    ]);
+
+    const list = await store.listCredentials();
+    assert.deepEqual(list.map(c => c.credentialId).sort(), ['a', 'b']);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ========================================================== password-store */
+
+test('setPassword/verify: richtiges Passwort true, falsches false', async () => {
+    const dir = await tempDir();
+    const store = createPasswordStore({ file: path.join(dir, 'admin-password.json') });
+
+    const record = await store.setPassword('korrekt-horse-battery');
+    assert.equal(await store.verify('korrekt-horse-battery', record), true);
+    assert.equal(await store.verify('falsch', record), false);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('read() liefert null bei fehlender/kaputter Datei', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'admin-password.json');
+    const store = createPasswordStore({ file });
+
+    assert.equal(await store.read(), null);
+
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(file, '{ kein json');
+    assert.equal(await store.read(), null);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('Passwort-Hash ueberlebt eine neue Store-Instanz (simulierter Neustart)', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'admin-password.json');
+
+    const first = createPasswordStore({ file });
+    await first.setPassword('neues-passwort');
+
+    const second = createPasswordStore({ file });
+    const record = await second.read();
+    assert.notEqual(record, null);
+    assert.equal(await second.verify('neues-passwort', record), true);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ========================================================== username-store */
+
+test('write/read: Roundtrip liefert genau den gespeicherten Benutzernamen', async () => {
+    const dir = await tempDir();
+    const store = createUsernameStore({ file: path.join(dir, 'admin-username.json') });
+
+    assert.equal(await store.read(), null);
+    await store.write('julian');
+    assert.equal(await store.read(), 'julian');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('username-store: read() liefert null bei kaputter Datei', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'admin-username.json');
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(file, '{ kein json');
+
+    const store = createUsernameStore({ file });
+    assert.equal(await store.read(), null);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('Benutzername ueberlebt eine neue Store-Instanz (simulierter Neustart)', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'admin-username.json');
+
+    const first = createUsernameStore({ file });
+    await first.write('neuer-name');
+
+    const second = createUsernameStore({ file });
+    assert.equal(await second.read(), 'neuer-name');
+
     await fsp.rm(dir, { recursive: true, force: true });
 });
