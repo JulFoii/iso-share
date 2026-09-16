@@ -16,6 +16,9 @@ const HASH_LABELS = {
 };
 %>
 <tr data-search="<%= file.name %>" data-row="<%= index %>">
+  <td class="table__select" data-label="">
+    <input type="checkbox" data-select-file value="<%= file.name %>" aria-label="<%= file.name %> auswählen">
+  </td>
   <td class="table__name" data-label="Name">
     <button
       type="button"
@@ -66,7 +69,7 @@ const HASH_LABELS = {
 </tr>
 
 <tr class="table__detail" id="<%= detailId %>" data-detail-for="<%= index %>" hidden>
-  <td colspan="4">
+  <td colspan="5">
     <dl class="details">
       <div class="details__item details__item--wide">
         <dt class="details__label">SHA-256</dt>

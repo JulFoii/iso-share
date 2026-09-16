@@ -332,6 +332,57 @@ body::after {
 }
 
 /* ==========================================================================
+   Tabs (Verwaltungsseite)
+   ========================================================================== */
+
+/*
+ * Markup ist eine Liste normaler Sprungmarken (href="#tab-…") — ohne JS
+ * bleiben alle Bereiche sichtbar und untereinander, admin-tabs.js blendet
+ * dann auf einen aktiven Bereich um.
+ */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--transition), background var(--transition);
+}
+
+.tab svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.tab[aria-current="page"] {
+  color: var(--text);
+  background: var(--accent-subtle);
+}
+
+.tab[aria-current="page"] svg {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* ==========================================================================
    Menu (Popover API + Anchor Positioning)
    ========================================================================== */
 
@@ -1007,6 +1058,43 @@ body::after {
     white-space: pre-wrap;
     word-break: break-all;
   }
+}
+
+/* ==========================================================================
+   Mehrfachauswahl (Bulk-Aktionen)
+   ========================================================================== */
+
+.table__select {
+  width: 2.5rem;
+}
+
+.table input[type="checkbox"],
+.bulk-bar input[type="checkbox"] {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--accent-subtle);
+}
+
+.bulk-bar__count {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.bulk-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* ==========================================================================

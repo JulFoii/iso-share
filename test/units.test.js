@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { Readable } = require('stream');
+const { Readable, Writable } = require('stream');
 const { promisify } = require('util');
 
 const { safeIsoName, safeUploadId } = require('../lib/safe-name');
@@ -22,6 +22,12 @@ const { createWebauthnStore } = require('../lib/webauthn-store');
 const { createPasswordStore } = require('../lib/password-store');
 const { createUsernameStore } = require('../lib/username-store');
 const { safeCredentialId, safePasskeyLabel, safeUsername } = require('../lib/safe-name');
+const {
+    generateSecret, base32Encode, base32Decode, totpAt, verifyTotp, buildOtpauthUri,
+} = require('../lib/totp');
+const { createTotpStore } = require('../lib/totp-store');
+const { createAuditLog } = require('../lib/audit-log');
+const { writeZip, fitsInClassicZip, crc32Update } = require('../lib/zip-stream');
 const { makeIso } = require('./helpers/make-iso');
 
 async function tempDir() {
@@ -637,6 +643,282 @@ test('Benutzername ueberlebt eine neue Store-Instanz (simulierter Neustart)', as
 
     const second = createUsernameStore({ file });
     assert.equal(await second.read(), 'neuer-name');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ================================================================== totp */
+
+test('base32Encode/base32Decode: Roundtrip fuer beliebige Bytelaengen', () => {
+    for (const length of [1, 5, 10, 16, 20, 33]) {
+        const original = crypto.randomBytes(length);
+        const encoded = base32Encode(original);
+        assert.match(encoded, /^[A-Z2-7]+$/);
+        assert.ok(base32Decode(encoded).equals(original));
+    }
+});
+
+test('totpAt liefert einen 6-stelligen Code, stabil innerhalb eines 30s-Schritts', () => {
+    const secret = generateSecret();
+    const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const code = totpAt(secret, now);
+    assert.match(code, /^\d{6}$/);
+    // Innerhalb desselben 30s-Fensters identisch
+    assert.equal(totpAt(secret, now + 5000), code);
+    // Verschiedene Sekunden ergeben typischerweise verschiedene Codes ueber
+    // ein ganzes 30s-Fenster hinweg betrachtet
+    assert.notEqual(totpAt(secret, now + 30000), code);
+});
+
+test('verifyTotp akzeptiert den aktuellen Code und toleriert +/- 1 Schritt', () => {
+    const secret = generateSecret();
+    const now = Date.now();
+    const code = totpAt(secret, now);
+
+    assert.equal(verifyTotp(secret, code, { time: now }), true);
+    assert.equal(verifyTotp(secret, code, { time: now + 30000 }), true, 'ein Schritt spaeter noch gueltig');
+    assert.equal(verifyTotp(secret, code, { time: now - 30000 }), true, 'ein Schritt frueher noch gueltig');
+    assert.equal(verifyTotp(secret, code, { time: now + 90000 }), false, 'drei Schritte weiter nicht mehr gueltig');
+});
+
+test('verifyTotp weist falsche und falsch formatierte Codes ab', () => {
+    const secret = generateSecret();
+    assert.equal(verifyTotp(secret, '000000'), false);
+    assert.equal(verifyTotp(secret, 'abcdef'), false);
+    assert.equal(verifyTotp(secret, ''), false);
+    assert.equal(verifyTotp(secret, null), false);
+});
+
+test('buildOtpauthUri enthaelt Secret, Label und Issuer', () => {
+    const uri = buildOtpauthUri({ secret: 'ABCDEFGH', label: 'admin', issuer: 'ISO Share' });
+    assert.match(uri, /^otpauth:\/\/totp\//);
+    assert.match(uri, /secret=ABCDEFGH/);
+    assert.match(uri, /issuer=ISO\+Share/);
+});
+
+/* ============================================================ totp-store */
+
+test('totp-store: isEnabled/getSecret vor dem Aktivieren', async () => {
+    const dir = await tempDir();
+    const store = createTotpStore({ dir });
+
+    assert.equal(await store.isEnabled(), false);
+    assert.equal(await store.getSecret(), null);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('totp-store: enable() persistiert und liefert 8 einmalige Recovery-Codes', async () => {
+    const dir = await tempDir();
+    const store = createTotpStore({ dir });
+
+    const codes = await store.enable('JBSWY3DPEHPK3PXP');
+    assert.equal(codes.length, 8);
+    assert.ok(codes.every(code => /^[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}$/.test(code)));
+    assert.equal(new Set(codes).size, 8, 'Codes muessen sich unterscheiden');
+
+    assert.equal(await store.isEnabled(), true);
+    assert.equal(await store.getSecret(), 'JBSWY3DPEHPK3PXP');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('totp-store: consumeRecoveryCode verbraucht einen Code genau einmal', async () => {
+    const dir = await tempDir();
+    const store = createTotpStore({ dir });
+    const [firstCode] = await store.enable('JBSWY3DPEHPK3PXP');
+
+    assert.equal(await store.consumeRecoveryCode('nicht-vorhanden'), false);
+    assert.equal(await store.consumeRecoveryCode(firstCode), true);
+    assert.equal(await store.consumeRecoveryCode(firstCode), false, 'derselbe Code darf kein zweites Mal gelten');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('totp-store: disable() entfernt den Datensatz vollstaendig', async () => {
+    const dir = await tempDir();
+    const store = createTotpStore({ dir });
+    await store.enable('JBSWY3DPEHPK3PXP');
+    await store.disable();
+
+    assert.equal(await store.isEnabled(), false);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ============================================================= audit-log */
+
+test('audit-log: log()/read() liefern die juengsten Eintraege zuerst', async () => {
+    const dir = await tempDir();
+    const auditLog = createAuditLog({ file: path.join(dir, 'audit.log') });
+
+    await auditLog.log('login_success', { ip: '127.0.0.1' });
+    await auditLog.log('upload', { filename: 'a.iso' });
+
+    const entries = await auditLog.read();
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].event, 'upload');
+    assert.equal(entries[1].event, 'login_success');
+    assert.equal(entries[0].filename, 'a.iso');
+    assert.equal(typeof entries[0].ts, 'number');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('audit-log: read() ohne vorhandene Datei liefert eine leere Liste', async () => {
+    const dir = await tempDir();
+    const auditLog = createAuditLog({ file: path.join(dir, 'fehlt', 'audit.log') });
+    assert.deepEqual(await auditLog.read(), []);
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('audit-log: eine kaputte Zeile wird uebersprungen statt die Liste zu verwerfen', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'audit.log');
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(file, '{"ts":1,"event":"ok"}\nkein json\n{"ts":2,"event":"auch-ok"}\n');
+
+    const auditLog = createAuditLog({ file });
+    const entries = await auditLog.read();
+    assert.equal(entries.length, 2);
+    assert.deepEqual(entries.map(e => e.event), ['auch-ok', 'ok']);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('audit-log: kuerzt die Datei, sobald sie das Groessenlimit ueberschreitet', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'audit.log');
+    const auditLog = createAuditLog({ file });
+    // Direkt eine grosse Datei simulieren statt zehntausender einzelner
+    // log()-Aufrufe — realistische Zeilengroesse, damit 3000 behaltene
+    // Zeilen tatsaechlich unter dem Limit landen.
+    await fsp.mkdir(dir, { recursive: true });
+    const lines = [];
+    for (let i = 0; i < 80000; i++) {
+        lines.push(JSON.stringify({ ts: i, event: 'filler', ip: '127.0.0.1' }));
+    }
+    await fsp.writeFile(file, `${lines.join('\n')}\n`);
+    assert.ok((await fsp.stat(file)).size > 2 * 1024 * 1024, 'Testaufbau muss ueber dem Limit starten');
+
+    await auditLog.log('neuestes_ereignis', {});
+
+    const stats = await fsp.stat(file);
+    assert.ok(stats.size < 2 * 1024 * 1024, 'Datei muss nach dem Schreiben gekuerzt worden sein');
+    const entries = await auditLog.read({ limit: 1 });
+    assert.equal(entries[0].event, 'neuestes_ereignis', 'juengster Eintrag darf beim Kuerzen nie verloren gehen');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+/* ============================================================= zip-stream */
+
+test('crc32Update stimmt mit dem bekannten Testvektor ueberein', () => {
+    // Standard-Testvektor: CRC-32 von "The quick brown fox jumps over the lazy dog"
+    const crc = crc32Update(0, Buffer.from('The quick brown fox jumps over the lazy dog', 'ascii'));
+    assert.equal(crc.toString(16), '414fa339');
+});
+
+test('fitsInClassicZip weist Groessen ueber 4 GiB ab', () => {
+    assert.equal(fitsInClassicZip(1024), true);
+    assert.equal(fitsInClassicZip(0xFFFFFFFF), true);
+    assert.equal(fitsInClassicZip(0xFFFFFFFF + 1), false);
+});
+
+/* Minimaler ZIP-Parser fuer den Test: liest die Central-Directory-Eintraege
+   und extrahiert jede Datei anhand ihres Local-Header-Offsets — unabhaengig
+   von writeZip() selbst geschrieben, damit der Test einen echten
+   Rundtrip-Fehler auch findet. */
+function parseZip(buffer) {
+    const eocdSignature = 0x06054b50;
+    let eocdOffset = -1;
+    for (let i = buffer.length - 22; i >= 0; i--) {
+        if (buffer.readUInt32LE(i) === eocdSignature) {
+            eocdOffset = i;
+            break;
+        }
+    }
+    assert.notEqual(eocdOffset, -1, 'End-of-Central-Directory-Signatur fehlt');
+
+    const entryCount = buffer.readUInt16LE(eocdOffset + 10);
+    const centralStart = buffer.readUInt32LE(eocdOffset + 16);
+
+    const entries = [];
+    let cursor = centralStart;
+    for (let i = 0; i < entryCount; i++) {
+        assert.equal(buffer.readUInt32LE(cursor), 0x02014b50, 'Central-Directory-Signatur fehlt');
+        const crc = buffer.readUInt32LE(cursor + 16);
+        const compressedSize = buffer.readUInt32LE(cursor + 20);
+        const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+        const nameLength = buffer.readUInt16LE(cursor + 28);
+        const extraLength = buffer.readUInt16LE(cursor + 30);
+        const commentLength = buffer.readUInt16LE(cursor + 32);
+        const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+        const name = buffer.toString('ascii', cursor + 46, cursor + 46 + nameLength);
+
+        // Lokalen Header lesen: Dateiname-Laenge steht dort noch einmal
+        assert.equal(buffer.readUInt32LE(localHeaderOffset), 0x04034b50, 'Local-File-Header-Signatur fehlt');
+        const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+        const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+        const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+        const content = buffer.subarray(dataStart, dataStart + uncompressedSize);
+
+        entries.push({ name, crc, compressedSize, uncompressedSize, content });
+        cursor += 46 + nameLength + extraLength + commentLength;
+    }
+    return entries;
+}
+
+async function collectZip(files) {
+    const chunks = [];
+    const sink = new Writable({
+        write(chunk, encoding, callback) {
+            chunks.push(Buffer.from(chunk));
+            callback();
+        },
+    });
+    await writeZip(sink, files);
+    return Buffer.concat(chunks);
+}
+
+test('writeZip erzeugt ein Archiv, dessen Central Directory jede Datei bytegenau wiederfindet', async () => {
+    const dir = await tempDir();
+    const contentA = crypto.randomBytes(5000);
+    const contentB = Buffer.from('kleine Textdatei\n'.repeat(20), 'utf8');
+    await fsp.writeFile(path.join(dir, 'a.iso'), contentA);
+    await fsp.writeFile(path.join(dir, 'b.iso'), contentB);
+
+    const files = [
+        { name: 'a.iso', path: path.join(dir, 'a.iso'), size: contentA.length, mtime: new Date() },
+        { name: 'b.iso', path: path.join(dir, 'b.iso'), size: contentB.length, mtime: new Date() },
+    ];
+
+    const zip = await collectZip(files);
+    const entries = parseZip(zip);
+
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].name, 'a.iso');
+    assert.ok(entries[0].content.equals(contentA), 'Inhalt von a.iso muss bytegenau erhalten bleiben');
+    assert.equal(entries[0].crc, crc32Update(0, contentA));
+    assert.equal(entries[1].name, 'b.iso');
+    assert.ok(entries[1].content.equals(contentB), 'Inhalt von b.iso muss bytegenau erhalten bleiben');
+    assert.equal(entries[1].crc, crc32Update(0, contentB));
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('writeZip: leere Datei ergibt einen validen 0-Byte-Eintrag', async () => {
+    const dir = await tempDir();
+    await fsp.writeFile(path.join(dir, 'leer.iso'), Buffer.alloc(0));
+
+    const zip = await collectZip([
+        { name: 'leer.iso', path: path.join(dir, 'leer.iso'), size: 0, mtime: new Date() },
+    ]);
+    const entries = parseZip(zip);
+
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].uncompressedSize, 0);
+    assert.equal(entries[0].content.length, 0);
 
     await fsp.rm(dir, { recursive: true, force: true });
 });

@@ -13,6 +13,7 @@ const { once } = require('events');
 const { startTestApp } = require('./helpers/app');
 const { makeIso } = require('./helpers/make-iso');
 const { createApp } = require('../server');
+const { totpAt } = require('../lib/totp');
 
 /* Legt eine Datei direkt in uploads/ ab und laesst sie hashen. */
 async function seedIso(app, name, options = {}) {
@@ -994,6 +995,211 @@ test('GET /webauthn/credentials liefert nie den publicKey', async t => {
     assert.equal(list.length, 1);
     assert.equal(list[0].credentialId, 'sichtbar');
     assert.equal('publicKey' in list[0], false);
+});
+
+/* ==================================================================== TOTP */
+
+test('TOTP: Einrichtung erzwingt beim naechsten Login den zweiten Faktor', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const setupRes = await fetch(app.url('/totp/setup'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(setupRes.status, 200);
+    const { secret, otpauthUrl } = await setupRes.json();
+    assert.match(otpauthUrl, /^otpauth:\/\/totp\//);
+
+    const confirmRes = await fetch(app.url('/totp/confirm'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ token: totpAt(secret) }),
+    });
+    assert.equal(confirmRes.status, 200);
+    const { recoveryCodes } = await confirmRes.json();
+    assert.equal(recoveryCodes.length, 8);
+
+    // Passwort allein reicht jetzt nicht mehr
+    const login = await app.login();
+    assert.equal(login.res.status, 302);
+    assert.equal(login.res.headers.get('location'), '/login/totp');
+
+    const stillLocked = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: login.cookie },
+        redirect: 'manual',
+    });
+    assert.equal(stillLocked.status, 302);
+    assert.equal(stillLocked.headers.get('location'), '/login/totp');
+
+    const wrongCode = await fetch(app.url('/login/totp'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: login.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: '000000' }).toString(),
+    });
+    assert.equal(wrongCode.status, 401);
+
+    const rightCode = await fetch(app.url('/login/totp'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: login.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: totpAt(secret) }).toString(),
+    });
+    assert.equal(rightCode.status, 302);
+    assert.equal(rightCode.headers.get('location'), '/admin-upload');
+
+    const admin = await fetch(app.url('/admin-upload'), { headers: { Cookie: login.cookie } });
+    assert.equal(admin.status, 200);
+});
+
+test('TOTP: ein Recovery-Code gilt genau einmal, /totp/disable entfernt den zweiten Faktor', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const { secret } = await (await fetch(app.url('/totp/setup'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    })).json();
+    const { recoveryCodes } = await (await fetch(app.url('/totp/confirm'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ token: totpAt(secret) }),
+    })).json();
+
+    const login = await app.login();
+    const usedOnce = await fetch(app.url('/login/totp'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: login.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: recoveryCodes[0] }).toString(),
+    });
+    assert.equal(usedOnce.status, 302, 'Recovery-Code muss beim ersten Mal funktionieren');
+
+    const secondLogin = await app.login();
+    const usedTwice = await fetch(app.url('/login/totp'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Cookie: secondLogin.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: recoveryCodes[0] }).toString(),
+    });
+    assert.equal(usedTwice.status, 401, 'derselbe Recovery-Code darf kein zweites Mal gelten');
+
+    // Zweiten Faktor wieder deaktivieren — braucht eine voll angemeldete Sitzung
+    const disableRes = await fetch(app.url('/totp/disable'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(disableRes.status, 200);
+
+    const plainLogin = await app.login();
+    assert.equal(plainLogin.res.status, 302);
+    assert.equal(plainLogin.res.headers.get('location'), '/admin-upload');
+});
+
+test('TOTP-Setup-Routen verlangen eine Sitzung', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/totp/setup'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Accept: 'application/json' },
+    });
+    assert.equal(res.status, 401);
+});
+
+/* ============================================================ Bulk-Aktionen */
+
+test('POST /download-zip liefert ein ZIP mit den ausgewaehlten Dateien und zaehlt Downloads', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const contentA = await seedIso(app, 'a.iso');
+    const contentB = await seedIso(app, 'b.iso');
+
+    const res = await fetch(app.url('/download-zip'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['a.iso', 'b.iso', '../evil.iso', 'fehlt.iso'] }),
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/zip/);
+
+    const body = Buffer.from(await res.arrayBuffer());
+    assert.equal(body.subarray(0, 4).toString('hex'), '504b0304', 'muss mit einer Local-File-Header-Signatur beginnen');
+    assert.ok(body.includes(Buffer.from('a.iso')));
+    assert.ok(body.includes(Buffer.from('b.iso')));
+    assert.ok(body.length > contentA.length + contentB.length);
+
+    await app.services.metadata.flush();
+    assert.equal((await app.services.metadata.read('a.iso')).downloads, 1);
+    assert.equal((await app.services.metadata.read('b.iso')).downloads, 1);
+});
+
+test('POST /download-zip lehnt eine leere oder zu grosse Auswahl ab', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const empty = await fetch(app.url('/download-zip'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['../etc/passwd', 'notizen.txt'] }),
+    });
+    assert.equal(empty.status, 400);
+
+    const missing = await fetch(app.url('/download-zip'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['fehlt.iso'] }),
+    });
+    assert.equal(missing.status, 404);
+
+    const tooMany = Array.from({ length: 101 }, (_, i) => `datei-${i}.iso`);
+    const overLimit = await fetch(app.url('/download-zip'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: tooMany }),
+    });
+    assert.equal(overLimit.status, 400);
+});
+
+test('POST /delete-bulk loescht mehrere Dateien und ignoriert ungueltige Namen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    await seedIso(app, 'a.iso');
+    await seedIso(app, 'b.iso');
+    await seedIso(app, 'c.iso');
+
+    const res = await fetch(app.url('/delete-bulk'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['a.iso', 'b.iso', '../evil.iso'] }),
+    });
+    assert.equal(res.status, 200);
+    const { deleted } = await res.json();
+    assert.deepEqual(deleted.sort(), ['a.iso', 'b.iso']);
+
+    const remaining = (await fsp.readdir(app.uploadsDir)).filter(name => name.endsWith('.iso'));
+    assert.deepEqual(remaining, ['c.iso']);
+});
+
+test('POST /delete-bulk ohne Sitzung wird abgewiesen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'a.iso');
+
+    const res = await fetch(app.url('/delete-bulk'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['a.iso'] }),
+    });
+    assert.equal(res.status, 401);
+    assert.ok((await fsp.readdir(app.uploadsDir)).includes('a.iso'), 'Datei darf ohne Sitzung nicht geloescht werden');
 });
 
 /* ============================================================== Header */

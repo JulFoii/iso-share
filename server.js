@@ -44,6 +44,10 @@ const { FileSessionStore } = require('./lib/session-store');
 const { createWebauthnStore } = require('./lib/webauthn-store');
 const { createPasswordStore } = require('./lib/password-store');
 const { createUsernameStore } = require('./lib/username-store');
+const { createTotpStore } = require('./lib/totp-store');
+const { generateSecret, verifyTotp, buildOtpauthUri } = require('./lib/totp');
+const { createAuditLog } = require('./lib/audit-log');
+const { writeZip, fitsInClassicZip } = require('./lib/zip-stream');
 const {
     generateRegistrationOptions, verifyRegistrationResponse,
     generateAuthenticationOptions, verifyAuthenticationResponse,
@@ -52,6 +56,7 @@ const {
 const DEFAULT_MAX_FILE_SIZE_MB = 8192;
 const DEFAULT_ADMIN_USERNAME = 'admin';
 const STALE_UPLOAD_SWEEP_MS = 60 * 60 * 1000;
+const MAX_BULK_FILES = 100;
 
 /* ==========================================================================
    App-Aufbau
@@ -161,6 +166,9 @@ function createApp(options = {}) {
     });
     const sessionStore = new FileSessionStore({ dir: sessionDir });
     const webauthnStore = createWebauthnStore({ dir: path.join(UPLOADS_DIR, '.meta') });
+    const totpStore = createTotpStore({ dir: path.join(UPLOADS_DIR, '.meta') });
+    // Gleicher data/-Ordner wie passwordStore/usernameStore (siehe dort).
+    const auditLog = createAuditLog({ file: path.join(path.dirname(sessionDir), 'audit.log') });
 
     const app = express();
 
@@ -419,7 +427,32 @@ function createApp(options = {}) {
         if (req.accepts(['html', 'json']) === 'json') {
             return res.status(401).json({ error: 'Nicht angemeldet.' });
         }
+        // Erster Faktor schon bestanden, zweiter noch offen: dorthin statt
+        // zurueck zu /login, sonst muesste das Passwort ein zweites Mal rein.
+        if (req.session && req.session.pendingTotp) {
+            return res.redirect('/login/totp');
+        }
         res.redirect('/login');
+    }
+
+    /*
+     * Gemeinsame Render-Daten fuer admin.ejs — die Seite wird von vier Routen
+     * gerendert (GET /admin-upload, GET /admin-search, sowie die
+     * Fehler-Pfade von POST /admin-password und /admin-username), alle mit
+     * denselben Grunddaten plus je einem eigenen Fehlerfeld/Suchbegriff.
+     */
+    async function adminPageData({ query = '', passwordError = null, usernameError = null } = {}) {
+        const [files, passkeys, currentUsername, totpEnabled, auditEntries] = await Promise.all([
+            listFiles(query),
+            webauthnStore.listCredentials(),
+            usernameStore.read().then(name => name ?? ADMIN_USERNAME),
+            totpStore.isEnabled(),
+            auditLog.read({ limit: 8 }),
+        ]);
+        return {
+            files, maxFileSizeMb: MAX_FILE_SIZE_MB, passkeys, currentUsername,
+            totpEnabled, auditEntries, passwordError, usernameError,
+        };
     }
 
     /* ============================================================ Routen */
@@ -507,32 +540,75 @@ function createApp(options = {}) {
         const usernameOk = submittedUsername.length > 0 && submittedUsername === storedUsername;
 
         if (usernameOk && passwordOk) {
-            // Session-ID nach erfolgreichem Login neu vergeben (Fixation)
+            const totpEnabled = await totpStore.isEnabled();
+            // Session-ID nach erfolgreichem Login neu vergeben (Fixation) —
+            // auch wenn TOTP noch als zweiter Faktor aussteht: der erste
+            // Faktor hat schon Vertrauen geschaffen, die alte, evtl. dem
+            // Angreifer bekannte Session-ID darf ab hier nicht mehr gelten.
             req.session.regenerate(err => {
                 if (err) {
                     log.error('Session regenerate error:', err);
                     return res.status(500).render('login', { error: 'Serverfehler.' });
                 }
+                if (totpEnabled) {
+                    req.session.pendingTotp = true;
+                    return res.redirect('/login/totp');
+                }
                 req.session.loggedIn = true;
+                auditLog.log('login_success', { ip: req.ip, username: submittedUsername });
                 res.redirect('/admin-upload');
             });
         } else {
             // Bewusst generisch — sonst liesse sich per Antwort erraten, ob
             // schon der Benutzername stimmte (Username-Enumeration).
+            auditLog.log('login_failed', { ip: req.ip, username: submittedUsername });
             res.status(401).render('login', { error: 'Benutzername oder Passwort falsch.' });
         }
     });
 
+    /*
+     * Zweiter Faktor nach erfolgreichem Passwort-Login. Erreichbar nur mit
+     * einer Session, die gerade den ersten Faktor bestanden hat
+     * (req.session.pendingTotp) — ohne das gilt dieselbe Regel wie ueberall
+     * sonst: kein gueltiger Zustand, zurueck zu /login. Gilt bewusst NICHT
+     * fuer den Passkey-Login: eine WebAuthn-Anmeldung ist schon
+     * Besitz+Verifikation und damit MFA-gleichwertig (siehe CLAUDE.md).
+     */
+    app.get('/login/totp', (req, res) => {
+        if (!req.session || !req.session.pendingTotp) {
+            return res.redirect('/login');
+        }
+        res.render('login-totp', { error: null });
+    });
+
+    app.post('/login/totp', loginLimiterGlobal, loginLimiterPerIp, async (req, res) => {
+        if (!req.session || !req.session.pendingTotp) {
+            return res.redirect('/login');
+        }
+
+        const token = String(req.body.token ?? '').trim();
+        const secret = await totpStore.getSecret();
+        // Ein 6-stelliger Code ist immer der TOTP-Pfad, alles andere wird als
+        // Recovery-Code versucht (Format ist fuer Nutzer nicht auswendig zu
+        // kennen, daher keine strengere Vorabpruefung noetig).
+        const ok = /^\d{6}$/.test(token) && secret
+            ? verifyTotp(secret, token)
+            : await totpStore.consumeRecoveryCode(token);
+
+        if (!ok) {
+            auditLog.log('totp_login_failed', { ip: req.ip });
+            return res.status(401).render('login-totp', { error: 'Code ungültig.' });
+        }
+
+        delete req.session.pendingTotp;
+        req.session.loggedIn = true;
+        auditLog.log('totp_login_success', { ip: req.ip });
+        res.redirect('/admin-upload');
+    });
+
     app.get('/admin-upload', checkAuth, async (req, res, next) => {
         try {
-            res.render('admin', {
-                files: await listFiles(),
-                maxFileSizeMb: MAX_FILE_SIZE_MB,
-                passkeys: await webauthnStore.listCredentials(),
-                passwordError: null,
-                usernameError: null,
-                currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
-            });
+            res.render('admin', await adminPageData());
         } catch (err) {
             next(err);
         }
@@ -567,14 +643,7 @@ function createApp(options = {}) {
         if (error) {
             if (wantsJson) return res.status(400).json({ error });
             try {
-                return res.status(400).render('admin', {
-                    files: await listFiles(),
-                    maxFileSizeMb: MAX_FILE_SIZE_MB,
-                    passkeys: await webauthnStore.listCredentials(),
-                    passwordError: error,
-                    usernameError: null,
-                    currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
-                });
+                return res.status(400).render('admin', await adminPageData({ passwordError: error }));
             } catch (err) {
                 return next(err);
             }
@@ -582,6 +651,7 @@ function createApp(options = {}) {
 
         try {
             await passwordStore.setPassword(password);
+            auditLog.log('password_changed', { ip: req.ip });
             if (wantsJson) return res.json({ ok: true });
             res.redirect('/admin-upload');
         } catch (err) {
@@ -597,14 +667,7 @@ function createApp(options = {}) {
             const error = 'Ungültiger Benutzername (1–64 Zeichen, keine Leerzeichen).';
             if (wantsJson) return res.status(400).json({ error });
             try {
-                return res.status(400).render('admin', {
-                    files: await listFiles(),
-                    maxFileSizeMb: MAX_FILE_SIZE_MB,
-                    passkeys: await webauthnStore.listCredentials(),
-                    passwordError: null,
-                    usernameError: error,
-                    currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
-                });
+                return res.status(400).render('admin', await adminPageData({ usernameError: error }));
             } catch (err) {
                 return next(err);
             }
@@ -612,6 +675,7 @@ function createApp(options = {}) {
 
         try {
             await usernameStore.write(username);
+            auditLog.log('username_changed', { ip: req.ip, username });
             if (wantsJson) return res.json({ ok: true });
             res.redirect('/admin-upload');
         } catch (err) {
@@ -678,6 +742,7 @@ function createApp(options = {}) {
                 transports: credential.transports ?? [],
                 label,
             });
+            auditLog.log('passkey_registered', { ip: req.ip, label });
             res.status(201).json({ ok: true });
         } catch (err) {
             log.error('WebAuthn Registrierung fehlgeschlagen:', err);
@@ -699,6 +764,7 @@ function createApp(options = {}) {
         const id = safeCredentialId(req.params.id);
         if (!id) return res.status(400).json({ error: 'Ungültige Credential-ID.' });
         const removed = await webauthnStore.removeCredential(id);
+        if (removed) auditLog.log('passkey_removed', { ip: req.ip, credentialId: id });
         res.status(removed ? 204 : 404).end();
     });
 
@@ -733,6 +799,7 @@ function createApp(options = {}) {
         const stored = credentialId ? await webauthnStore.findCredential(credentialId) : null;
         if (!stored) {
             delete req.session.webauthnChallenge;
+            auditLog.log('passkey_login_failed', { ip: req.ip });
             return res.status(401).json({ error: 'Unbekannter Passkey.' });
         }
         try {
@@ -751,6 +818,7 @@ function createApp(options = {}) {
             });
             if (!verification.verified) {
                 delete req.session.webauthnChallenge;
+                auditLog.log('passkey_login_failed', { ip: req.ip });
                 return res.status(401).json(PASSKEY_LOGIN_FAILED);
             }
             await webauthnStore.updateCounter(stored.credentialId, verification.authenticationInfo.newCounter);
@@ -763,12 +831,68 @@ function createApp(options = {}) {
                     return res.status(500).json({ error: 'Serverfehler.' });
                 }
                 req.session.loggedIn = true;
+                auditLog.log('passkey_login_success', { ip: req.ip, credentialId: stored.credentialId });
                 res.json({ ok: true, redirect: '/admin-upload' });
             });
         } catch (err) {
             log.error('WebAuthn Anmeldung fehlgeschlagen:', err);
             delete req.session.webauthnChallenge;
+            auditLog.log('passkey_login_failed', { ip: req.ip });
             res.status(401).json(PASSKEY_LOGIN_FAILED);
+        }
+    });
+
+    /* --------------------------------------------------------------- TOTP --
+       Zweiter Faktor fuer den Passwort-Login (siehe /login/totp oben).
+       Registrierung/Deaktivierung nur fuer bereits angemeldete Admins,
+       dasselbe Vertrauensmodell wie bei Passkeys und /admin-password: eine
+       gueltige Sitzung ist Nachweis genug, keine erneute Passwortabfrage. */
+
+    app.post('/totp/setup', checkAuth, async (req, res, next) => {
+        try {
+            const secret = generateSecret();
+            // Nur in der Session, nicht persistiert — siehe lib/totp-store.js.
+            req.session.totpSetupSecret = secret;
+            const label = (await usernameStore.read()) ?? ADMIN_USERNAME;
+            res.json({ secret, otpauthUrl: buildOtpauthUri({ secret, label }) });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/totp/confirm', checkAuth, async (req, res, next) => {
+        const pendingSecret = req.session.totpSetupSecret;
+        if (!pendingSecret) {
+            return res.status(400).json({ error: 'Keine offene Einrichtung.' });
+        }
+        if (!verifyTotp(pendingSecret, req.body.token)) {
+            return res.status(400).json({ error: 'Code ungültig.' });
+        }
+        try {
+            const recoveryCodes = await totpStore.enable(pendingSecret);
+            delete req.session.totpSetupSecret;
+            auditLog.log('totp_enabled', { ip: req.ip });
+            res.json({ ok: true, recoveryCodes });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/totp/disable', checkAuth, async (req, res, next) => {
+        try {
+            await totpStore.disable();
+            auditLog.log('totp_disabled', { ip: req.ip });
+            res.json({ ok: true });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/admin-audit-log', checkAuth, async (req, res, next) => {
+        try {
+            res.render('audit-log', { entries: await auditLog.read({ limit: 500 }) });
+        } catch (err) {
+            next(err);
         }
     });
 
@@ -837,6 +961,7 @@ function createApp(options = {}) {
             const { filename } = await uploadSessions.finish(id);
             // Checksumme und Volume-Infos laufen im Hintergrund nach
             hashQueue.enqueue(filename);
+            auditLog.log('upload', { ip: req.ip, filename });
             res.status(201).json({ filename });
         } catch (err) {
             sendUploadError(res, err, log);
@@ -889,6 +1014,7 @@ function createApp(options = {}) {
             }
 
             hashQueue.enqueue(filename);
+            auditLog.log('upload', { ip: req.ip, filename });
 
             if (wantsJson) return res.status(201).json({ filename });
             res.redirect('/admin-upload');
@@ -913,7 +1039,93 @@ function createApp(options = {}) {
         } catch (err) {
             return next(err);
         }
+        auditLog.log('delete', { ip: req.ip, filename });
         res.redirect('/admin-upload');
+    });
+
+    /* ------------------------------------------------- Bulk-Aktionen --
+       Mehrfachauswahl in der Dateitabelle (public/js/bulk-actions.js):
+       gemeinsamer ZIP-Download fuer beide Ansichten, Loeschen nur im
+       Admin-Bereich. Beide Routen nehmen dieselbe { names: string[] }-Form
+       und wenden dieselbe safeIsoName()-Pruefung wie /download bzw. /delete
+       auf jeden Eintrag an — Mehrfachauswahl aendert nichts an den
+       Sicherheitsanforderungen an einen einzelnen Dateinamen. */
+
+    app.post('/download-zip', downloadLimiter, async (req, res) => {
+        const requested = Array.isArray(req.body?.names) ? req.body.names : [];
+        const names = [...new Set(requested.map(safeIsoName).filter(Boolean))];
+        if (names.length === 0) {
+            return res.status(400).json({ error: 'Keine gültigen Dateien ausgewählt.' });
+        }
+        if (names.length > MAX_BULK_FILES) {
+            return res.status(400).json({ error: `Höchstens ${MAX_BULK_FILES} Dateien auf einmal.` });
+        }
+
+        const files = [];
+        for (const name of names) {
+            try {
+                const filePath = path.join(UPLOADS_DIR, name);
+                const stats = await fsp.stat(filePath);
+                if (stats.isFile()) files.push({ name, path: filePath, size: stats.size, mtime: stats.mtime });
+            } catch {
+                // Fehlende Datei stillschweigend uebersprungen — die Auswahl im
+                // Browser kann seit dem letzten Laden veraltet sein.
+            }
+        }
+        if (files.length === 0) {
+            return res.status(404).json({ error: 'Keine der ausgewählten Dateien wurde gefunden.' });
+        }
+
+        // Vorab pruefen statt mittendrin abbrechen, siehe lib/zip-stream.js.
+        const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+        const headerOverheadEstimate = files.length * 1024;
+        if (!files.every(file => fitsInClassicZip(file.size))
+            || totalSize + headerOverheadEstimate > 0xFFFFFFFF) {
+            return res.status(413).json({
+                error: 'Auswahl zu groß für ein ZIP-Archiv (Format-Limit 4 GiB) — bitte in kleineren Gruppen herunterladen.',
+            });
+        }
+
+        res.type('application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="iso-share-${Date.now()}.zip"`);
+
+        try {
+            await writeZip(res, files);
+            files.forEach(file => metadata.recordDownload(file.name));
+        } catch (err) {
+            // Mitten im Stream — Header sind schon raus, es kann kein
+            // Fehlerstatus mehr folgen. Best-effort: Verbindung beenden.
+            log.error('ZIP-Download-Fehler:', err);
+        } finally {
+            res.end();
+        }
+    });
+
+    app.post('/delete-bulk', checkAuth, async (req, res, next) => {
+        const requested = Array.isArray(req.body?.names) ? req.body.names : [];
+        const names = [...new Set(requested.map(safeIsoName).filter(Boolean))];
+        if (names.length === 0) {
+            return res.status(400).json({ error: 'Keine gültigen Dateien ausgewählt.' });
+        }
+        if (names.length > MAX_BULK_FILES) {
+            return res.status(400).json({ error: `Höchstens ${MAX_BULK_FILES} Dateien auf einmal.` });
+        }
+
+        const deleted = [];
+        try {
+            for (const name of names) {
+                const filePath = path.join(UPLOADS_DIR, name);
+                if (path.dirname(filePath) !== UPLOADS_DIR) continue;
+                await fsp.rm(filePath, { force: true });
+                await metadata.remove(name);
+                deleted.push(name);
+            }
+        } catch (err) {
+            return next(err);
+        }
+
+        auditLog.log('bulk_delete', { ip: req.ip, count: deleted.length, names: deleted });
+        res.json({ deleted });
     });
 
     app.get('/logout', (req, res) => {
@@ -947,15 +1159,7 @@ function createApp(options = {}) {
     app.get('/admin-search', checkAuth, async (req, res, next) => {
         const query = String(req.query.q || '').slice(0, 200);
         try {
-            res.render('admin', {
-                files: await listFiles(query),
-                searchQuery: query,
-                maxFileSizeMb: MAX_FILE_SIZE_MB,
-                passkeys: await webauthnStore.listCredentials(),
-                passwordError: null,
-                usernameError: null,
-                currentUsername: (await usernameStore.read()) ?? ADMIN_USERNAME,
-            });
+            res.render('admin', { ...(await adminPageData({ query })), searchQuery: query });
         } catch (err) {
             next(err);
         }
@@ -1025,7 +1229,11 @@ function createApp(options = {}) {
         timers.forEach(clearInterval);
         sessionStore.close();
         webauthnStore.close();
-        await Promise.all([metadata.flush(), sessionStore.settled(), webauthnStore.flush()]);
+        totpStore.close();
+        await Promise.all([
+            metadata.flush(), sessionStore.settled(), webauthnStore.flush(),
+            totpStore.flush(), auditLog.flush(),
+        ]);
     }
 
     return {
@@ -1035,7 +1243,7 @@ function createApp(options = {}) {
         // fuer Tests und /healthz
         services: {
             metadata, hashQueue, uploadSessions, sessionStore,
-            webauthnStore, passwordStore, usernameStore, listFiles,
+            webauthnStore, passwordStore, usernameStore, totpStore, auditLog, listFiles,
         },
     };
 }

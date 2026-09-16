@@ -55,10 +55,21 @@
             <p class="empty__text">Sobald ein Administrator ein ISO-Image hochlädt, erscheint es hier zum Download.</p>
           </div>
         <% } else { %>
+          <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
+            <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
+            <div class="bulk-bar__actions">
+              <button type="button" class="btn btn--secondary btn--sm" data-bulk-zip>Als ZIP herunterladen</button>
+              <button type="button" class="btn btn--ghost btn--sm" data-bulk-clear>Auswahl aufheben</button>
+            </div>
+          </div>
+
           <div class="table-scroll">
             <table class="table" data-filetable>
               <thead>
                 <tr>
+                  <th scope="col" class="table__select">
+                    <input type="checkbox" data-select-all aria-label="Alle auswählen">
+                  </th>
                   <th scope="col">
                     <button type="button" class="table__sort" data-sort-type="text">
                       Name
@@ -111,5 +122,6 @@
 <script src="/js/row-details.js" defer></script>
 <script src="/js/copy.js" defer></script>
 <script src="/js/toast.js" defer></script>
+<script src="/js/bulk-actions.js" defer></script>
 </body>
 </html>

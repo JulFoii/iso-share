@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('partials/head', { title: 'Audit-Log' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('partials/navbar', { page: 'admin', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header">
+      <h1 class="page-header__title">Audit-Log</h1>
+      <p class="page-header__meta">
+        <span><%= entries.length %> <%= entries.length === 1 ? 'Eintrag' : 'Einträge' %></span>
+        <a class="page-header__link" href="/admin-upload">Zurück zur Verwaltung</a>
+      </p>
+    </header>
+
+    <div class="card card--flush reveal">
+      <% if (entries.length === 0) { %>
+        <div class="empty">
+          <div class="empty__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+              <path d="M9 12h6M9 16h6M9 8h6"/>
+              <rect x="4" y="3" width="16" height="18" rx="2"/>
+            </svg>
+          </div>
+          <p class="empty__title">Noch keine Einträge</p>
+          <p class="empty__text">Anmeldungen, Uploads und Änderungen am Konto erscheinen hier.</p>
+        </div>
+      <% } else { %>
+        <div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Zeitpunkt</th>
+                <th scope="col">Ereignis</th>
+                <th scope="col">IP</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% entries.forEach(entry => { %>
+                <% const { ts, event, ip, ...rest } = entry; %>
+                <tr>
+                  <td class="table__num" data-label="Zeitpunkt">
+                    <time datetime="<%= new Date(ts).toISOString() %>"><%= formatDate(ts) %> <%= new Date(ts).toLocaleTimeString('de-DE') %></time>
+                  </td>
+                  <td data-label="Ereignis"><span class="badge badge--mono"><%= event %></span></td>
+                  <td class="table__num mono" data-label="IP"><%= ip || '—' %></td>
+                  <td data-label="Details" class="mono">
+                    <%= Object.keys(rest).length > 0 ? JSON.stringify(rest) : '' %>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="/js/theme.js" defer></script>
+</body>
+</html>

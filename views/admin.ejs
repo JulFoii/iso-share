@@ -20,7 +20,30 @@
       </p>
     </header>
 
-    <div class="stack">
+    <nav class="tabs" aria-label="Verwaltungsbereiche" data-tabs>
+      <a class="tab" href="#tab-files" data-tab-link="files" aria-current="page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        Dateien
+      </a>
+      <a class="tab" href="#tab-security" data-tab-link="security">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Sicherheit
+      </a>
+      <a class="tab" href="#tab-account" data-tab-link="account">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M4 21c0-4 4-7 8-7s8 3 8 7"/>
+        </svg>
+        Konto
+      </a>
+    </nav>
+
+    <div class="stack" id="tab-files" data-tab-panel="files">
       <!-- Upload -->
       <section class="card reveal" aria-labelledby="upload-heading">
         <div class="card__header">
@@ -122,10 +145,22 @@
             </form>
           </div>
 
+          <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
+            <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
+            <div class="bulk-bar__actions">
+              <button type="button" class="btn btn--secondary btn--sm" data-bulk-zip>Als ZIP herunterladen</button>
+              <button type="button" class="btn btn--danger-ghost btn--sm" data-bulk-delete>Löschen</button>
+              <button type="button" class="btn btn--ghost btn--sm" data-bulk-clear>Auswahl aufheben</button>
+            </div>
+          </div>
+
           <div class="table-scroll">
             <table class="table" data-filetable>
               <thead>
                 <tr>
+                  <th scope="col" class="table__select">
+                    <input type="checkbox" data-select-all aria-label="Alle auswählen">
+                  </th>
                   <th scope="col">
                     <button type="button" class="table__sort" data-sort-type="text">
                       Name
@@ -167,7 +202,9 @@
           </div>
         <% } %>
       </section>
+    </div>
 
+    <div class="stack" id="tab-security" data-tab-panel="security">
       <!-- Passkeys -->
       <section class="card reveal" aria-labelledby="passkeys-heading">
         <div class="card__header">
@@ -192,6 +229,49 @@
         </div>
       </section>
 
+      <!-- Zwei-Faktor (TOTP) -->
+      <section class="card reveal" aria-labelledby="totp-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="totp-heading">Zwei-Faktor-Authentifizierung</h2>
+          <span class="badge <%= totpEnabled ? 'badge--ok' : '' %>" id="totpStatusBadge"><%= totpEnabled ? 'Aktiv' : 'Inaktiv' %></span>
+        </div>
+        <div class="card__body">
+          <p class="hint mb-4">
+            Zusätzlicher Code aus einer Authenticator-App beim Passwort-Login.
+            Gilt nicht für die Anmeldung per Passkey — die zählt schon als
+            gleichwertig starker Faktor.
+          </p>
+          <div class="row">
+            <button type="button" class="btn btn--secondary" id="totpSetupButton" <%= totpEnabled ? 'hidden' : '' %>>TOTP einrichten</button>
+            <button type="button" class="btn btn--danger-ghost" id="totpDisableButton" <%= totpEnabled ? '' : 'hidden' %>>Deaktivieren</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Audit-Log -->
+      <section class="card reveal" aria-labelledby="audit-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="audit-heading">Audit-Log</h2>
+          <a class="btn btn--ghost btn--sm" href="/admin-audit-log">Alle ansehen</a>
+        </div>
+        <div class="card__body">
+          <% if (auditEntries.length === 0) { %>
+            <p class="hint">Noch keine Einträge.</p>
+          <% } else { %>
+            <ul class="stack">
+              <% auditEntries.forEach(entry => { %>
+                <li class="row row--between">
+                  <span><span class="badge badge--mono"><%= entry.event %></span> <span class="hint"><%= entry.ip || '' %></span></span>
+                  <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= new Date(entry.ts).toLocaleTimeString('de-DE') %></time>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+    </div>
+
+    <div class="stack" id="tab-account" data-tab-panel="account">
       <!-- Admin-Benutzername -->
       <section class="card reveal" aria-labelledby="username-heading">
         <div class="card__header">
@@ -341,6 +421,68 @@
   </form>
 </dialog>
 
+<dialog class="dialog" id="totpSetupDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">TOTP einrichten</h2>
+      <p class="dialog__text">
+        In einer Authenticator-App (z. B. Aegis, Google Authenticator) als
+        Setup-Schlüssel eintragen — es gibt bewusst keinen QR-Code, jede App
+        akzeptiert die manuelle Eingabe.
+      </p>
+      <div class="field">
+        <label class="label">Setup-Schlüssel</label>
+        <div class="row">
+          <code class="mono" id="totpSecretDisplay"></code>
+          <button type="button" class="btn btn--ghost btn--sm" id="totpSecretCopy" data-copy-label="Schlüssel kopiert">Kopieren</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label" for="totpToken">Code aus der App</label>
+        <input class="input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="totpToken" autocomplete="one-time-code">
+      </div>
+      <p class="hint" id="totpSetupError"></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--primary" id="totpSetupConfirm">Bestätigen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="totpRecoveryDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Wiederherstellungscodes</h2>
+      <p class="dialog__text">
+        Jeder Code funktioniert einmal, falls das Gerät mit der
+        Authenticator-App verloren geht. Jetzt sichern — sie werden nicht
+        erneut angezeigt.
+      </p>
+      <ul class="stack mono" id="totpRecoveryList"></ul>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">Codes gesichert</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="bulkDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Ausgewählte Dateien löschen?</h2>
+      <p class="dialog__text">
+        <strong class="mono" data-bulk-delete-list></strong>
+        werden endgültig vom Server entfernt. Das lässt sich nicht zurücknehmen.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" data-bulk-delete-confirm>Löschen</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog class="dialog" id="deleteDialog">
   <form method="POST" action="/delete">
     <div class="dialog__body">
@@ -360,12 +502,15 @@
 
 <script src="/js/theme.js" defer></script>
 <script src="/js/toast.js" defer></script>
+<script src="/js/admin-tabs.js" defer></script>
 <script src="/js/filetable.js" defer></script>
 <script src="/js/delete-dialog.js" defer></script>
+<script src="/js/bulk-actions.js" defer></script>
 <script src="/js/row-details.js" defer></script>
 <script src="/js/copy.js" defer></script>
 <script src="/js/upload.js" defer></script>
 <script src="/js/webauthn.js" defer></script>
+<script src="/js/totp.js" defer></script>
 <script src="/js/password-toggle.js" defer></script>
 <script src="/js/account-forms.js" defer></script>
 </body>
