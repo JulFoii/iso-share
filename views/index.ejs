@@ -14,6 +14,9 @@
       <p class="page-header__meta">
         <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
         <span><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <% if (files.length > 0) { %>
+          <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
+        <% } %>
       </p>
     </header>
 
@@ -78,22 +81,8 @@
                 </tr>
               </thead>
               <tbody>
-                <% files.forEach(file => { %>
-                  <tr data-search="<%= file.name %>">
-                    <td class="table__name" data-label="Name"><%= file.name %></td>
-                    <td class="table__num" data-label="Größe" data-value="<%= file.size %>"><%= formatSize(file.size) %></td>
-                    <td class="table__num" data-label="Hochgeladen" data-value="<%= file.mtime %>">
-                      <time datetime="<%= new Date(file.mtime).toISOString() %>"><%= formatDate(file.mtime) %></time>
-                    </td>
-                    <td class="table__actions" data-label="">
-                      <a class="btn btn--secondary btn--sm" href="/download/<%= encodeURIComponent(file.name) %>" download>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
-                        </svg>
-                        Download
-                      </a>
-                    </td>
-                  </tr>
+                <% files.forEach((file, index) => { %>
+                  <%- include('partials/file-row', { file, index, admin: false }) %>
                 <% }); %>
               </tbody>
             </table>
@@ -119,5 +108,8 @@
 
 <script src="/js/theme.js" defer></script>
 <script src="/js/filetable.js" defer></script>
+<script src="/js/row-details.js" defer></script>
+<script src="/js/copy.js" defer></script>
+<script src="/js/toast.js" defer></script>
 </body>
 </html>

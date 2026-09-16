@@ -1,10 +1,10 @@
 {
   "name": "iso_uploader",
   "version": "1.0.0",
-  "description": "iso_uploader",
+  "description": "Minimalistische Web-App zum sicheren Teilen von ISO-Images",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "start": "node server.js",
     "build": "echo 'No build steps defined - skipping build'"
   },
@@ -17,5 +17,8 @@
     "express-session": "^1.18.1",
     "helmet": "^8.3.0",
     "multer": "^2.3.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

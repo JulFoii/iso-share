@@ -486,6 +486,16 @@ body::after {
   color: var(--text-subtle);
 }
 
+.page-header__link {
+  color: var(--text-muted);
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 0.2em;
+}
+
+.page-header__link:hover {
+  color: var(--accent);
+}
+
 .section-title {
   font-size: var(--text-lg);
   margin-bottom: var(--space-4);
@@ -833,6 +843,112 @@ body::after {
   justify-content: flex-end;
 }
 
+/* Umschalter fuer die Detailzeile — sitzt vor dem Dateinamen */
+.table__expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-right: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  border-radius: var(--radius-sm);
+  vertical-align: -0.15em;
+}
+
+.table__expand:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.table__expand svg {
+  transition: rotate var(--transition);
+}
+
+.table__expand[aria-expanded="true"] svg {
+  rotate: 90deg;
+}
+
+.table__filename {
+  word-break: break-all;
+}
+
+/* Volume-Label aus dem ISO-Deskriptor, als zweite Zeile unter dem Dateinamen */
+.table__volume {
+  display: block;
+  margin-top: 0.15rem;
+  margin-left: 1.5rem;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* ---------------------------------------------------------- Detailzeile */
+
+.table__detail > td {
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border-top: 1px dashed var(--border);
+}
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+}
+
+.details__item--wide {
+  grid-column: 1 / -1;
+}
+
+.details__label {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  margin-bottom: 0.15rem;
+}
+
+.details__value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ein SHA-256 ist 64 Zeichen — muss auf schmalen Schirmen umbrechen duerfen */
+.details__hash {
+  font-size: var(--text-xs);
+  word-break: break-all;
+  color: var(--text);
+}
+
+.details__snippet {
+  flex: 1 1 20rem;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.details__copy {
+  flex-shrink: 0;
+}
+
+.details__pending {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
 /* Ist die Tabelle schmal, wird jede Zeile zu einer eigenen Karte. Die Labels
    kommen aus data-label, damit die Werte ohne Kopfzeile lesbar bleiben. */
 @container filetable (width < 34rem) {
@@ -870,6 +986,26 @@ body::after {
 
   .table__row-actions {
     justify-content: flex-start;
+  }
+
+  /* Die Detailzeile ist keine Karte mit Label-Spalte, sondern ein Block —
+     sonst erzeugt das td::before oben ein leeres Label-Feld. */
+  .table tbody tr.table__detail {
+    display: block;
+    padding: 0;
+  }
+
+  .table__detail > td {
+    display: block;
+  }
+
+  .table__detail > td::before {
+    content: none;
+  }
+
+  .details__snippet {
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 }
 
@@ -928,6 +1064,12 @@ body::after {
 
 .badge--mono {
   font-family: var(--font-mono);
+}
+
+.badge--ok {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  background: var(--success-subtle);
+  color: var(--success);
 }
 
 .alert {

@@ -1,0 +1,171 @@
+<%
+/*
+ * Eine Datei = zwei <tr>: die Zeile selbst und eine ausklappbare Detailzeile.
+ * Beide werden von index.ejs und admin.ejs genutzt, `admin` schaltet nur die
+ * Loeschen-Aktion dazu.
+ *
+ * Ohne JavaScript bleibt die Detailzeile per [hidden] zu und der Umschalter
+ * ist nutzlos — deshalb steht die Checksumme zusaetzlich unter /checksums als
+ * SHA256SUMS bereit.
+ */
+const detailId = `file-detail-${index}`;
+const HASH_LABELS = {
+  hashing: 'wird berechnet …',
+  queued: 'in der Warteschlange',
+  pending: 'noch nicht berechnet',
+};
+%>
+<tr data-search="<%= file.name %>" data-row="<%= index %>">
+  <td class="table__name" data-label="Name">
+    <button
+      type="button"
+      class="table__expand"
+      data-row-toggle="<%= detailId %>"
+      aria-expanded="false"
+      aria-controls="<%= detailId %>">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m9 6 6 6-6 6"/>
+      </svg>
+      <span class="visually-hidden">Details zu <%= file.name %> anzeigen</span>
+    </button>
+    <span class="table__filename"><%= file.name %></span>
+    <% if (file.iso && file.iso.volumeId) { %>
+      <span class="table__volume" title="Volume-Label aus dem ISO-Deskriptor"><%= file.iso.volumeId %></span>
+    <% } %>
+  </td>
+  <td class="table__num" data-label="Größe" data-value="<%= file.size %>"><%= formatSize(file.size) %></td>
+  <td class="table__num" data-label="Hochgeladen" data-value="<%= file.mtime %>">
+    <time datetime="<%= new Date(file.mtime).toISOString() %>"><%= formatDate(file.mtime) %></time>
+  </td>
+  <td class="table__actions" data-label="">
+    <span class="table__row-actions">
+      <% if (admin) { %>
+        <a class="btn btn--ghost btn--sm" href="/download/<%= encodeURIComponent(file.name) %>" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
+          </svg>
+          <span class="visually-hidden">Herunterladen: <%= file.name %></span>
+        </a>
+        <button type="button" class="btn btn--danger-ghost btn--sm" data-delete="<%= file.name %>">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16M10 11v6M14 11v6"/>
+            <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+          <span class="visually-hidden">Löschen: <%= file.name %></span>
+        </button>
+      <% } else { %>
+        <a class="btn btn--secondary btn--sm" href="/download/<%= encodeURIComponent(file.name) %>" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
+          </svg>
+          Download
+        </a>
+      <% } %>
+    </span>
+  </td>
+</tr>
+
+<tr class="table__detail" id="<%= detailId %>" data-detail-for="<%= index %>" hidden>
+  <td colspan="4">
+    <dl class="details">
+      <div class="details__item details__item--wide">
+        <dt class="details__label">SHA-256</dt>
+        <dd class="details__value">
+          <% if (file.sha256) { %>
+            <span class="details__hash mono"><%= file.sha256 %></span>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm details__copy"
+              data-copy="<%= file.sha256 %>"
+              data-copy-label="Checksumme kopiert">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"/>
+                <path d="M5 15V5a2 2 0 0 1 2-2h8"/>
+              </svg>
+              Kopieren
+            </button>
+          <% } else { %>
+            <span class="details__pending">
+              <%= HASH_LABELS[file.hashStatus] || HASH_LABELS.pending %>
+            </span>
+          <% } %>
+        </dd>
+      </div>
+
+      <% if (file.sha256) { %>
+        <div class="details__item details__item--wide">
+          <dt class="details__label">Prüfen</dt>
+          <dd class="details__value">
+            <code class="details__snippet mono">echo &quot;<%= file.sha256 %>  <%= file.name %>&quot; | sha256sum -c</code>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm details__copy"
+              data-copy="echo &quot;<%= file.sha256 %>  <%= file.name %>&quot; | sha256sum -c"
+              data-copy-label="Befehl kopiert">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"/>
+                <path d="M5 15V5a2 2 0 0 1 2-2h8"/>
+              </svg>
+              Kopieren
+            </button>
+          </dd>
+        </div>
+      <% } %>
+
+      <div class="details__item">
+        <dt class="details__label">Downloads</dt>
+        <dd class="details__value"><%= file.downloads %></dd>
+      </div>
+
+      <% if (file.iso) { %>
+        <div class="details__item">
+          <dt class="details__label">Bootfähig</dt>
+          <dd class="details__value">
+            <% if (file.iso.bootable && file.iso.bootable.length > 0) { %>
+              <% file.iso.bootable.forEach(platform => { %>
+                <span class="badge badge--ok"><%= platform %></span>
+              <% }); %>
+            <% } else { %>
+              <span class="details__pending">nein — reines Datenimage</span>
+            <% } %>
+          </dd>
+        </div>
+
+        <% if (file.iso.volumeId) { %>
+          <div class="details__item">
+            <dt class="details__label">Volume-Label</dt>
+            <dd class="details__value mono"><%= file.iso.volumeId %></dd>
+          </div>
+        <% } %>
+
+        <% if (file.iso.createdAt) { %>
+          <div class="details__item">
+            <dt class="details__label">Image erstellt</dt>
+            <dd class="details__value">
+              <time datetime="<%= file.iso.createdAt %>"><%= formatDate(file.iso.createdAt) %></time>
+            </dd>
+          </div>
+        <% } %>
+
+        <% if (file.iso.publisher) { %>
+          <div class="details__item">
+            <dt class="details__label">Herausgeber</dt>
+            <dd class="details__value"><%= file.iso.publisher %></dd>
+          </div>
+        <% } %>
+
+        <% if (file.iso.application) { %>
+          <div class="details__item">
+            <dt class="details__label">Erstellt mit</dt>
+            <dd class="details__value"><%= file.iso.application %></dd>
+          </div>
+        <% } %>
+      <% } else if (file.hashStatus === 'done') { %>
+        <div class="details__item">
+          <dt class="details__label">Format</dt>
+          <dd class="details__value details__pending">kein ISO-9660-Dateisystem erkannt</dd>
+        </div>
+      <% } %>
+    </dl>
+  </td>
+</tr>

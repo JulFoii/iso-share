@@ -14,6 +14,9 @@
       <p class="page-header__meta">
         <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
         <span><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <% if (files.length > 0) { %>
+          <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
+        <% } %>
       </p>
     </header>
 
@@ -23,6 +26,7 @@
         <div class="card__header">
           <h2 class="card__title" id="upload-heading">Image hochladen</h2>
           <span class="badge spacer">.iso</span>
+          <span class="badge">max <%= formatSize(maxFileSizeMb * 1024 * 1024) %></span>
         </div>
         <div class="card__body">
           <form id="uploadForm" class="stack" enctype="multipart/form-data" method="POST" action="/upload">
@@ -47,6 +51,16 @@
               <span class="badge file-preview__size" id="filePreviewSize"></span>
             </div>
 
+            <!-- Wird von upload.js gefuellt, wenn der Server zu dieser Datei
+                 noch eine offene Upload-Sitzung hat. -->
+            <div class="alert alert--info" id="uploadResume" hidden>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4M12 8h.01"/>
+              </svg>
+              <span id="uploadResumeText"></span>
+            </div>
+
             <div class="progress" id="uploadProgress" hidden>
               <div class="progress__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload-Fortschritt">
                 <div class="progress__bar" id="uploadProgressBar"></div>
@@ -59,7 +73,13 @@
 
             <div class="row">
               <button type="submit" class="btn btn--primary" id="uploadSubmit" disabled>Hochladen</button>
-              <span class="hint">Bestehende Dateien mit gleichem Namen werden überschrieben.</span>
+              <button type="button" class="btn btn--secondary" id="uploadPause" hidden>Pause</button>
+              <button type="button" class="btn btn--danger-ghost" id="uploadCancel" hidden>Abbrechen</button>
+              <span class="hint">
+                Große Images werden in Blöcken übertragen und lassen sich nach
+                einem Abbruch fortsetzen. Bestehende Dateien mit gleichem Namen
+                werden überschrieben.
+              </span>
             </div>
           </form>
         </div>
@@ -128,31 +148,8 @@
                 </tr>
               </thead>
               <tbody>
-                <% files.forEach(file => { %>
-                  <tr data-search="<%= file.name %>">
-                    <td class="table__name" data-label="Name"><%= file.name %></td>
-                    <td class="table__num" data-label="Größe" data-value="<%= file.size %>"><%= formatSize(file.size) %></td>
-                    <td class="table__num" data-label="Hochgeladen" data-value="<%= file.mtime %>">
-                      <time datetime="<%= new Date(file.mtime).toISOString() %>"><%= formatDate(file.mtime) %></time>
-                    </td>
-                    <td class="table__actions" data-label="">
-                      <span class="table__row-actions">
-                        <a class="btn btn--ghost btn--sm" href="/download/<%= encodeURIComponent(file.name) %>" download>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
-                          </svg>
-                          <span class="visually-hidden">Herunterladen: <%= file.name %></span>
-                        </a>
-                        <button type="button" class="btn btn--danger-ghost btn--sm" data-delete="<%= file.name %>">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M4 7h16M10 11v6M14 11v6"/>
-                            <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                          </svg>
-                          <span class="visually-hidden">Löschen: <%= file.name %></span>
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
+                <% files.forEach((file, index) => { %>
+                  <%- include('partials/file-row', { file, index, admin: true }) %>
                 <% }); %>
               </tbody>
             </table>
@@ -197,6 +194,8 @@
 <script src="/js/toast.js" defer></script>
 <script src="/js/filetable.js" defer></script>
 <script src="/js/delete-dialog.js" defer></script>
+<script src="/js/row-details.js" defer></script>
+<script src="/js/copy.js" defer></script>
 <script src="/js/upload.js" defer></script>
 </body>
 </html>
