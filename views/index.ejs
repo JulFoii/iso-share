@@ -24,7 +24,7 @@
       <% if (files.length > 0) { %>
         <!-- Ohne JavaScript sucht das Formular serverseitig, filetable.js
              filtert sonst direkt im Browser. -->
-        <form class="search" action="/search" method="GET" role="search">
+        <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/search" method="GET" role="search">
           <svg class="search__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7"/>
             <path d="m20 20-3.5-3.5"/>
@@ -39,7 +39,11 @@
             placeholder="Filtern… (/)"
             autocomplete="off"
             value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+          <% if (typeof searchQuery !== 'undefined' && searchQuery) { %>
+            <a class="search__reset" href="/" aria-label="Suche zurücksetzen" title="Suche zurücksetzen">×</a>
+          <% } %>
         </form>
+        <%- include('partials/tag-filter', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/search' }) %>
       <% } %>
 
       <div class="card card--flush reveal">

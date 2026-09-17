@@ -16,12 +16,13 @@ const { safeIsoName, safeUploadId } = require('../lib/safe-name');
 const { readIsoInfo } = require('../lib/iso9660');
 const { createMetadataStore } = require('../lib/metadata');
 const { createHashQueue } = require('../lib/hash-queue');
+const { deriveAutoTags, applyAutoTags } = require('../lib/auto-tags');
 const { createUploadSessions } = require('../lib/chunked-upload');
 const { FileSessionStore } = require('../lib/session-store');
 const { createWebauthnStore } = require('../lib/webauthn-store');
 const { createPasswordStore } = require('../lib/password-store');
 const { createUsernameStore } = require('../lib/username-store');
-const { safeCredentialId, safePasskeyLabel, safeUsername } = require('../lib/safe-name');
+const { safeCredentialId, safePasskeyLabel, safeUsername, safeTag } = require('../lib/safe-name');
 const {
     generateSecret, base32Encode, base32Decode, totpAt, verifyTotp, buildOtpauthUri,
 } = require('../lib/totp');
@@ -96,6 +97,14 @@ test('safeUsername akzeptiert Identifier ohne Leerzeichen', () => {
     assert.equal(safeUsername('admin@example.com'), 'admin@example.com');
     for (const input of ['', '   ', null, 'a'.repeat(65), 'mit leerzeichen', '<script>']) {
         assert.equal(safeUsername(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
+    }
+});
+
+test('safeTag trimmt, faltet Leerzeichen und begrenzt', () => {
+    assert.equal(safeTag('  linux   distro  '), 'linux distro');
+    assert.equal(safeTag("Server's (v2)"), "Server's (v2)");
+    for (const input of ['', '   ', null, undefined, 'a'.repeat(33), '<script>', 'a/b']) {
+        assert.equal(safeTag(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
     }
 });
 
@@ -271,6 +280,125 @@ test('nach einer Aenderung wird neu gehasht', async () => {
     assert.notEqual(meta.sha256, first);
     assert.equal(meta.sha256, crypto.createHash('sha256').update(second).digest('hex'));
     assert.equal(meta.iso.volumeId, 'ZWEITE');
+
+    await fsp.rm(root, { recursive: true, force: true });
+});
+
+/* =========================================================== auto-tags */
+
+test('deriveAutoTags liest Boot-Plattformen und Volume-Label', () => {
+    assert.deepEqual(
+        deriveAutoTags({ bootable: ['BIOS', 'UEFI'], volumeId: 'UBUNTU_24_04' }),
+        ['BIOS', 'UEFI', 'UBUNTU_24_04']
+    );
+    assert.deepEqual(deriveAutoTags({ bootable: [], volumeId: null }), []);
+    assert.deepEqual(deriveAutoTags(null), []);
+});
+
+test('applyAutoTags dupliziert nichts bei einem erneuten Rescan', () => {
+    const first = applyAutoTags(null, ['BIOS', 'UEFI', 'ARCHIV'], 15);
+    assert.deepEqual(first.tags, ['BIOS', 'UEFI', 'ARCHIV']);
+    assert.deepEqual(first.autoTags, ['BIOS', 'UEFI', 'ARCHIV']);
+
+    // gleicher Kandidaten-Satz wie beim letzten Lauf -> keine Duplikate
+    const rescanned = applyAutoTags(
+        { tags: first.tags, autoTags: first.autoTags },
+        ['BIOS', 'UEFI', 'ARCHIV'],
+        15
+    );
+    assert.deepEqual(rescanned.tags, ['BIOS', 'UEFI', 'ARCHIV']);
+});
+
+test('applyAutoTags laesst manuelle Tags unangetastet', () => {
+    const meta = { tags: ['BIOS', 'meine-notiz'], autoTags: ['BIOS'] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI'], 15);
+    assert.deepEqual(result.tags, ['meine-notiz', 'BIOS', 'UEFI']);
+    assert.deepEqual(result.autoTags, ['BIOS', 'UEFI']);
+});
+
+test('applyAutoTags laesst einen entfernten Auto-Tag beim Rescan weg', () => {
+    // Admin hat 'UEFI' geloescht, server.js traegt es in removedAutoTags ein
+    const meta = { tags: ['BIOS'], autoTags: ['BIOS'], removedAutoTags: ['UEFI'] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI'], 15);
+    assert.deepEqual(result.tags, ['BIOS']);
+    assert.deepEqual(result.autoTags, ['BIOS']);
+});
+
+test('applyAutoTags verwirft einen veralteten Auto-Tag, wenn sich die volumeId aendert', () => {
+    const meta = { tags: ['BIOS', 'ALT'], autoTags: ['BIOS', 'ALT'] };
+    const result = applyAutoTags(meta, ['BIOS', 'NEU'], 15);
+    assert.deepEqual(result.tags, ['BIOS', 'NEU']);
+});
+
+test('applyAutoTags haelt die Gesamtzahl im Limit', () => {
+    const meta = { tags: ['a', 'b'], autoTags: [] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI', 'VOL'], 3);
+    assert.deepEqual(result.tags, ['a', 'b', 'BIOS']);
+    assert.deepEqual(result.autoTags, ['BIOS']);
+});
+
+test('hash-queue vergibt Auto-Tags und haengt sie bei einem Rescan nicht doppelt an', async () => {
+    const root = await tempDir();
+    const uploadsDir = path.join(root, 'uploads');
+    await fsp.mkdir(uploadsDir, { recursive: true });
+    const file = path.join(uploadsDir, 'x.iso');
+
+    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const queue = createHashQueue({ uploadsDir, metadata, log: { error() {} } });
+
+    await fsp.writeFile(file, makeIso({ volumeId: 'ARCHIV' }));
+    await queue.scanAll();
+    await queue.whenIdle();
+
+    let meta = await metadata.read('x.iso');
+    assert.deepEqual(meta.tags, ['BIOS', 'UEFI', 'ARCHIV']);
+    assert.deepEqual(meta.autoTags, ['BIOS', 'UEFI', 'ARCHIV']);
+
+    // Admin entfernt 'UEFI' von Hand (simuliert, was server.js beim DELETE tut)
+    await metadata.update('x.iso', {
+        tags: meta.tags.filter(t => t !== 'UEFI'),
+        autoTags: meta.autoTags.filter(t => t !== 'UEFI'),
+        removedAutoTags: ['UEFI'],
+    });
+
+    // Erneuter Scan derselben unveraenderten Datei -> nichts zu tun, kein Wiederanhaengen
+    assert.equal(await queue.scanAll(), 0);
+    await queue.whenIdle();
+    meta = await metadata.read('x.iso');
+    assert.deepEqual(meta.tags, ['BIOS', 'ARCHIV']);
+
+    await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('hash-queue traegt Auto-Tags bei laengst gehashten Bestandsdateien nach, ohne neu zu hashen', async () => {
+    const root = await tempDir();
+    const uploadsDir = path.join(root, 'uploads');
+    await fsp.mkdir(uploadsDir, { recursive: true });
+    const file = path.join(uploadsDir, 'x.iso');
+    await fsp.writeFile(file, makeIso({ volumeId: 'ARCHIV' }));
+
+    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const stats = await fsp.stat(file);
+    const iso = await readIsoInfo(file);
+    // Sidecar wie vor dem Auto-Tag-Feature: Checksumme/ISO-Info schon
+    // vorhanden und aktuell, aber kein autoTags-Feld.
+    await metadata.update('x.iso', {
+        size: stats.size,
+        mtime: stats.mtimeMs,
+        sha256: 'deadbeef',
+        iso,
+        tags: [],
+    });
+
+    const queue = createHashQueue({ uploadsDir, metadata, log: { error() {} } });
+    const missing = await queue.scanAll();
+    assert.equal(missing, 0, 'Checksumme ist aktuell, darf nicht als fehlend gezaehlt/neu gehasht werden');
+    await queue.whenIdle();
+
+    const meta = await metadata.read('x.iso');
+    assert.deepEqual(meta.tags, ['BIOS', 'UEFI', 'ARCHIV']);
+    assert.deepEqual(meta.autoTags, ['BIOS', 'UEFI', 'ARCHIV']);
+    assert.equal(meta.sha256, 'deadbeef', 'Backfill darf die vorhandene Checksumme nicht neu berechnen');
 
     await fsp.rm(root, { recursive: true, force: true });
 });

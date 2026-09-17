@@ -1,0 +1,24 @@
+<%
+/*
+ * Zeile mit allen vorkommenden Tags als klickbare Badges, ueber /search bzw.
+ * /admin-search (searchBase) — dieselbe Zielroute wie das Tag-Badge in
+ * file-row.ejs, nur eben fuer alle Tags auf einen Blick statt nur die einer
+ * Datei. Erwartet allTags, searchBase und optional searchQuery vom Aufrufer.
+ */
+%>
+<% if (typeof allTags !== 'undefined' && allTags.length > 0) { %>
+  <div class="tag-filter" role="group" aria-label="Nach Tag filtern">
+    <svg class="tag-filter__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 2H4a2 2 0 0 0-2 2v8l10.59 10.59a2 2 0 0 0 2.82 0l7.18-7.18a2 2 0 0 0 0-2.82L12 2Z"/>
+      <circle cx="7.5" cy="7.5" r="1.25" fill="currentColor" stroke="none"/>
+    </svg>
+    <div class="tag-filter__list">
+      <% allTags.forEach(tag => { %>
+        <a
+          class="badge badge--tag<%= (typeof searchQuery !== 'undefined' && searchQuery && searchQuery.toLowerCase() === tag.toLowerCase()) ? ' badge--tag-active' : '' %>"
+          href="<%= searchBase %>?q=<%= encodeURIComponent(tag) %>"
+        ><%= tag %></a>
+      <% }); %>
+    </div>
+  </div>
+<% } %>

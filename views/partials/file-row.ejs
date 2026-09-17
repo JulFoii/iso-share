@@ -14,8 +14,10 @@ const HASH_LABELS = {
   queued: 'in der Warteschlange',
   pending: 'noch nicht berechnet',
 };
+const tags = file.tags || [];
+const searchBase = admin ? '/admin-search' : '/search';
 %>
-<tr data-search="<%= file.name %>" data-row="<%= index %>">
+<tr data-search="<%= [file.name].concat(tags).join(' ') %>" data-row="<%= index %>">
   <td class="table__select" data-label="">
     <input type="checkbox" data-select-file value="<%= file.name %>" aria-label="<%= file.name %> auswählen">
   </td>
@@ -34,6 +36,13 @@ const HASH_LABELS = {
     <span class="table__filename"><%= file.name %></span>
     <% if (file.iso && file.iso.volumeId) { %>
       <span class="table__volume" title="Volume-Label aus dem ISO-Deskriptor"><%= file.iso.volumeId %></span>
+    <% } %>
+    <% if (tags.length > 0) { %>
+      <span class="table__tags" data-tags-display-for="<%= file.name %>">
+        <% tags.forEach(tag => { %>
+          <a class="badge badge--tag" href="<%= searchBase %>?q=<%= encodeURIComponent(tag) %>"><%= tag %></a>
+        <% }); %>
+      </span>
     <% } %>
   </td>
   <td class="table__num" data-label="Größe" data-value="<%= file.size %>"><%= formatSize(file.size) %></td>
@@ -119,6 +128,31 @@ const HASH_LABELS = {
         <dt class="details__label">Downloads</dt>
         <dd class="details__value"><%= file.downloads %></dd>
       </div>
+
+      <% if (admin) { %>
+        <div class="details__item details__item--wide">
+          <dt class="details__label">Tags</dt>
+          <dd class="details__value">
+            <span class="tag-chips" data-tags-edit-for="<%= file.name %>">
+              <% tags.forEach(tag => { %>
+                <span class="tag-chip">
+                  <%= tag %>
+                  <button
+                    type="button"
+                    class="tag-chip__remove"
+                    data-tag-remove
+                    data-tag-file="<%= file.name %>"
+                    data-tag-value="<%= tag %>"
+                    aria-label="Tag <%= tag %> entfernen">×</button>
+                </span>
+              <% }); %>
+            </span>
+            <% if (tags.length === 0) { %>
+              <span class="details__pending">noch keine Tags — werden automatisch aus dem ISO ermittelt</span>
+            <% } %>
+          </dd>
+        </div>
+      <% } %>
 
       <% if (file.iso) { %>
         <div class="details__item">

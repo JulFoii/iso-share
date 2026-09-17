@@ -127,7 +127,7 @@
           </div>
         <% } else { %>
           <div class="card__toolbar">
-            <form class="search" action="/admin-search" method="GET" role="search">
+            <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/admin-search" method="GET" role="search">
               <svg class="search__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"/>
                 <path d="m20 20-3.5-3.5"/>
@@ -142,8 +142,16 @@
                 placeholder="Filtern… (/)"
                 autocomplete="off"
                 value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+              <% if (typeof searchQuery !== 'undefined' && searchQuery) { %>
+                <a class="search__reset" href="/admin-upload" aria-label="Suche zurücksetzen" title="Suche zurücksetzen">×</a>
+              <% } %>
             </form>
           </div>
+          <% if (typeof allTags !== 'undefined' && allTags.length > 0) { %>
+            <div class="card__toolbar">
+              <%- include('partials/tag-filter', { allTags: allTags, searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/admin-search' }) %>
+            </div>
+          <% } %>
 
           <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
             <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
@@ -508,6 +516,7 @@
 <script src="/js/bulk-actions.js" defer></script>
 <script src="/js/row-details.js" defer></script>
 <script src="/js/copy.js" defer></script>
+<script src="/js/tags.js" defer></script>
 <script src="/js/upload.js" defer></script>
 <script src="/js/webauthn.js" defer></script>
 <script src="/js/totp.js" defer></script>

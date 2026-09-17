@@ -1202,6 +1202,115 @@ test('POST /delete-bulk ohne Sitzung wird abgewiesen', async t => {
     assert.ok((await fsp.readdir(app.uploadsDir)).includes('a.iso'), 'Datei darf ohne Sitzung nicht geloescht werden');
 });
 
+/* ===================================================================== Tags */
+
+test('POST /files/:name/tags gibt es nicht mehr — Tags werden nur automatisch vergeben', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    await seedIso(app, 'debian.iso');
+
+    const res = await fetch(app.url('/files/debian.iso/tags'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ tag: 'Linux' }),
+    });
+    assert.equal(res.status, 404);
+});
+
+test('DELETE /files/:name/tags/:tag entfernt einen Tag case-insensitiv', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    // Ohne Boot-Plattformen/Volume-Label, damit keine Auto-Tags dazwischenfunken
+    await seedIso(app, 'fedora.iso', { platformIds: [], volumeId: '' });
+    await app.services.metadata.update('fedora.iso', { tags: ['Workstation'] });
+
+    const res = await fetch(app.url('/files/fedora.iso/tags/WORKSTATION'), {
+        method: 'DELETE',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).tags, []);
+});
+
+test('DELETE /files/:name/tags/:tag ohne Sitzung wird abgewiesen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'a.iso');
+    await app.services.metadata.update('a.iso', { tags: ['x'] });
+
+    const res = await fetch(app.url('/files/a.iso/tags/x'), {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+    });
+    assert.equal(res.status, 401);
+    assert.deepEqual((await app.services.metadata.read('a.iso')).tags, ['x']);
+});
+
+test('/ zeigt eine Tag-Filterleiste mit allen vorkommenden Tags, auch bei aktiver Suche', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'ubuntu.iso', { volumeId: 'UBUNTU' });
+    await seedIso(app, 'debian.iso', { platformIds: [], volumeId: '' });
+    await app.services.metadata.update('debian.iso', { tags: ['sonder-tag'], autoTags: [] });
+
+    const html = await (await fetch(app.url('/'))).text();
+    assert.match(html, /class="tag-filter"/);
+    assert.match(html, /BIOS/);
+    assert.match(html, /sonder-tag/);
+
+    // Auch wenn eine Suche 'sonder-tag' herausfiltert, bleibt 'BIOS' in der
+    // Filterleiste anwaehlbar — sie haengt nicht am aktuellen Suchergebnis.
+    const search = await (await fetch(app.url('/search?q=sonder'))).text();
+    assert.match(search, /BIOS/, 'Tag-Filterleiste muss unabhaengig von der aktiven Suche alle Tags zeigen');
+
+    // Reset-Link nur bei aktiver Suche, und er fuehrt zurueck zur vollen Liste
+    assert.doesNotMatch(html, /search__reset/, 'ohne aktive Suche kein Reset-Link');
+    assert.match(search, /class="search__reset" href="\/"/, 'aktive Suche zeigt einen Reset-Link auf \/');
+});
+
+test('/admin-upload zeigt dieselbe Tag-Filterleiste und einen Reset-Link auf /admin-search', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    await seedIso(app, 'ubuntu.iso', { volumeId: 'UBUNTU' });
+
+    const search = await (await fetch(app.url('/admin-search?q=ubuntu'), { headers: { Cookie: cookie } })).text();
+    assert.match(search, /class="tag-filter"/);
+    assert.match(search, /BIOS/);
+    assert.match(search, /class="search__reset" href="\/admin-upload"/);
+});
+
+/* ================================================================ Metrics */
+
+test('/metrics liefert Prometheus-Textformat mit Datei- und Aktivitaets-Zaehlern', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const content = await seedIso(app, 'metrics.iso');
+    await fetch(app.url('/download/metrics.iso'));
+    await app.services.metadata.flush();
+
+    await fetch(app.url('/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ username: 'admin', password: 'falsch' }),
+    });
+
+    const res = await fetch(app.url('/metrics'));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/plain/);
+
+    const body = await res.text();
+    assert.match(body, /# TYPE iso_share_files_total gauge/);
+    assert.match(body, /^iso_share_files_total 1$/m);
+    assert.match(body, new RegExp(`^iso_share_storage_bytes ${content.length}$`, 'm'));
+    assert.match(body, /^iso_share_downloads_total 1$/m);
+    assert.match(body, /^iso_share_uploads_total 0$/m, 'metrics.iso wurde direkt in uploads/ gelegt, nicht ueber die Upload-Route');
+    assert.match(body, /^iso_share_login_failures_total 1$/m);
+});
+
 /* ============================================================== Header */
 
 test('Sicherheits-Header sitzen', async t => {

@@ -34,7 +34,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 
 const {
-    safeIsoName, safeUploadId, safeCredentialId, safePasskeyLabel, safeUsername,
+    safeIsoName, safeUploadId, safeCredentialId, safePasskeyLabel, safeUsername, safeTag,
 } = require('./lib/safe-name');
 const { moveFile } = require('./lib/move-file');
 const { createMetadataStore } = require('./lib/metadata');
@@ -57,6 +57,7 @@ const DEFAULT_MAX_FILE_SIZE_MB = 8192;
 const DEFAULT_ADMIN_USERNAME = 'admin';
 const STALE_UPLOAD_SWEEP_MS = 60 * 60 * 1000;
 const MAX_BULK_FILES = 100;
+const MAX_TAGS_PER_FILE = 15;
 
 /* ==========================================================================
    App-Aufbau
@@ -158,7 +159,9 @@ function createApp(options = {}) {
     const metadata = createMetadataStore({
         dir: path.join(UPLOADS_DIR, '.meta'),
     });
-    const hashQueue = createHashQueue({ uploadsDir: UPLOADS_DIR, metadata, log });
+    const hashQueue = createHashQueue({
+        uploadsDir: UPLOADS_DIR, metadata, log, maxAutoTags: MAX_TAGS_PER_FILE,
+    });
     const uploadSessions = createUploadSessions({
         tmpDir: TMP_DIR,
         uploadsDir: UPLOADS_DIR,
@@ -401,23 +404,50 @@ function createApp(options = {}) {
             downloads: meta?.downloads ?? 0,
             sha256: current ? meta.sha256 : null,
             iso: current ? (meta.iso ?? null) : null,
+            tags: meta?.tags ?? [],
             // 'done' | 'hashing' | 'queued' | 'pending'
             hashStatus: current ? 'done' : (hashQueue.statusOf(name) ?? 'pending'),
         };
     }
 
-    async function listFiles(query = '') {
+    async function describeAll() {
         await fsp.mkdir(UPLOADS_DIR, { recursive: true });
+        const names = (await fsp.readdir(UPLOADS_DIR))
+            .filter(name => name.toLowerCase().endsWith('.iso'));
+        return Promise.all(names.map(describe));
+    }
 
+    async function listFiles(query = '') {
+        // Tags stecken im Sidecar und sind erst nach describe() bekannt,
+        // darum laeuft der Suchfilter hier statt schon auf den readdir()-
+        // Namen wie frueher — kostet bei einer Suche ein paar zusaetzlich
+        // gelesene Sidecars, fuer die Dateizahl einer Single-Admin-Instanz
+        // unproblematisch.
+        const files = await describeAll();
         const needle = query.toLowerCase();
-        const names = (await fsp.readdir(UPLOADS_DIR)).filter(
-            name =>
-                name.toLowerCase().endsWith('.iso') &&
-                name.toLowerCase().includes(needle)
-        );
+        const matched = needle
+            ? files.filter(file =>
+                file.name.toLowerCase().includes(needle) ||
+                file.tags.some(tag => tag.toLowerCase().includes(needle)))
+            : files;
 
-        const files = await Promise.all(names.map(describe));
-        return files.sort((a, b) => a.name.localeCompare(b.name, 'de'));
+        return matched.sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    }
+
+    /* Alle vorkommenden Tags ueber alle Dateien hinweg, fuer die Tag-
+       Filterleiste in index.ejs/admin.ejs — bewusst unabhaengig von einer
+       aktiven Suche, damit auch Tags aus herausgefilterten Dateien
+       anwaehlbar bleiben und man per Klick wieder auf sie filtern kann. */
+    async function listAllTags() {
+        const files = await describeAll();
+        const seen = new Map();
+        for (const file of files) {
+            for (const tag of file.tags) {
+                const key = tag.toLowerCase();
+                if (!seen.has(key)) seen.set(key, tag);
+            }
+        }
+        return [...seen.values()].sort((a, b) => a.localeCompare(b, 'de'));
     }
 
     function checkAuth(req, res, next) {
@@ -442,15 +472,16 @@ function createApp(options = {}) {
      * denselben Grunddaten plus je einem eigenen Fehlerfeld/Suchbegriff.
      */
     async function adminPageData({ query = '', passwordError = null, usernameError = null } = {}) {
-        const [files, passkeys, currentUsername, totpEnabled, auditEntries] = await Promise.all([
+        const [files, allTags, passkeys, currentUsername, totpEnabled, auditEntries] = await Promise.all([
             listFiles(query),
+            listAllTags(),
             webauthnStore.listCredentials(),
             usernameStore.read().then(name => name ?? ADMIN_USERNAME),
             totpStore.isEnabled(),
             auditLog.read({ limit: 8 }),
         ]);
         return {
-            files, maxFileSizeMb: MAX_FILE_SIZE_MB, passkeys, currentUsername,
+            files, allTags, maxFileSizeMb: MAX_FILE_SIZE_MB, passkeys, currentUsername,
             totpEnabled, auditEntries, passwordError, usernameError,
         };
     }
@@ -460,7 +491,8 @@ function createApp(options = {}) {
     app.get('/', async (req, res, next) => {
         const loggedIn = Boolean(req.session && req.session.loggedIn);
         try {
-            res.render('index', { files: await listFiles(), loggedIn });
+            const [files, allTags] = await Promise.all([listFiles(), listAllTags()]);
+            res.render('index', { files, allTags, loggedIn });
         } catch (err) {
             next(err);
         }
@@ -524,6 +556,70 @@ function createApp(options = {}) {
             uptime: Math.round(process.uptime()),
             hashing: hashQueue.isIdle() ? 'idle' : 'busy',
         });
+    });
+
+    function metricLine(name, type, help, value) {
+        return `# HELP ${name} ${help}\n# TYPE ${name} ${type}\n${name} ${value}`;
+    }
+
+    /*
+     * Prometheus-Textformat, oeffentlich wie /healthz — die Zahlen hier
+     * (Dateizahl, Speicherplatz, Downloads) verraten nichts, was die
+     * oeffentliche Startseite nicht ohnehin schon zeigt. Upload-/Lösch-/
+     * Login-Zaehler kommen aus dem Audit-Log (siehe lib/audit-log.js) und
+     * sind damit nur so vollstaendig wie dessen Kuerzungsgrenze (2 MB /
+     * die juengsten 3000 Zeilen) — fuer ein Live-Dashboard einer Single-
+     * Admin-Instanz ausreichend, kein Ersatz fuer /admin-audit-log.
+     */
+    app.get('/metrics', async (req, res, next) => {
+        try {
+            const [files, auditEntries] = await Promise.all([
+                listFiles(),
+                auditLog.read({ limit: Infinity }),
+            ]);
+
+            const storageBytes = files.reduce((sum, file) => sum + file.size, 0);
+            const downloadsTotal = files.reduce((sum, file) => sum + file.downloads, 0);
+            const countEvents = (...events) =>
+                auditEntries.filter(entry => events.includes(entry.event)).length;
+            const uploadsTotal = countEvents('upload');
+            const deletesTotal = countEvents('delete') +
+                auditEntries
+                    .filter(entry => entry.event === 'bulk_delete')
+                    .reduce((sum, entry) => sum + (entry.count || 0), 0);
+            const loginFailuresTotal = countEvents(
+                'login_failed', 'totp_login_failed', 'passkey_login_failed'
+            );
+            const loginSuccessesTotal = countEvents(
+                'login_success', 'totp_login_success', 'passkey_login_success'
+            );
+
+            const body = [
+                metricLine('iso_share_uptime_seconds', 'gauge',
+                    'Sekunden seit Prozessstart.', process.uptime()),
+                metricLine('iso_share_files_total', 'gauge',
+                    'Anzahl der aktuell gespeicherten ISO-Dateien.', files.length),
+                metricLine('iso_share_storage_bytes', 'gauge',
+                    'Belegter Speicherplatz aller ISO-Dateien in Byte.', storageBytes),
+                metricLine('iso_share_downloads_total', 'counter',
+                    'Kumulierte Downloads aller Dateien.', downloadsTotal),
+                metricLine('iso_share_uploads_total', 'counter',
+                    'Anzahl erfolgreicher Uploads (aus dem Audit-Log).', uploadsTotal),
+                metricLine('iso_share_deletes_total', 'counter',
+                    'Anzahl geloeschter Dateien, einzeln plus Bulk (aus dem Audit-Log).', deletesTotal),
+                metricLine('iso_share_login_failures_total', 'counter',
+                    'Fehlgeschlagene Anmeldeversuche ueber Passwort, TOTP oder Passkey (aus dem Audit-Log).', loginFailuresTotal),
+                metricLine('iso_share_login_successes_total', 'counter',
+                    'Erfolgreiche Anmeldungen (aus dem Audit-Log).', loginSuccessesTotal),
+                metricLine('iso_share_hash_queue_busy', 'gauge',
+                    '1 waehrend die Hintergrund-Checksummenberechnung laeuft, sonst 0.', hashQueue.isIdle() ? 0 : 1),
+            ].join('\n\n');
+
+            res.type('text/plain; version=0.0.4; charset=utf-8');
+            res.send(`${body}\n`);
+        } catch (err) {
+            next(err);
+        }
     });
 
     app.get('/login', (req, res) => {
@@ -1128,6 +1224,51 @@ function createApp(options = {}) {
         res.json({ deleted });
     });
 
+    /* ------------------------------------------------------------- Tags --
+       Freitext-Kategorien je Datei, im metadata-Sidecar gespeichert
+       (metadata.update() ist ein Merge-Patch, tags braucht darum keine
+       Aenderung in lib/metadata.js). Tags werden ausschliesslich automatisch
+       von lib/hash-queue.js (siehe lib/auto-tags.js) aus dem ISO selbst
+       vergeben — es gibt bewusst keine Route zum manuellen Hinzufuegen mehr,
+       nur zum Entfernen eines einzelnen (falschen) Auto-Tags, JS-only wie
+       /webauthn/credentials/:id und /delete-bulk. Ein entfernter Auto-Tag
+       landet in removedAutoTags, damit der naechste Rescan ihn nicht wieder
+       anhaengt (siehe lib/auto-tags.js). */
+
+    app.delete('/files/:name/tags/:tag', checkAuth, async (req, res, next) => {
+        const filename = safeIsoName(req.params.name);
+        const tag = safeTag(req.params.tag);
+        if (!filename || !tag) {
+            return res.status(400).json({ error: 'Ungültige Anfrage.' });
+        }
+
+        try {
+            const meta = await metadata.read(filename);
+            const existing = meta?.tags ?? [];
+            const tags = existing.filter(t => t.toLowerCase() !== tag.toLowerCase());
+            if (tags.length !== existing.length) {
+                const autoTags = meta?.autoTags ?? [];
+                const wasAutoTag = autoTags.some(t => t.toLowerCase() === tag.toLowerCase());
+                const patch = { tags };
+                if (wasAutoTag) {
+                    // Nicht wieder auferstehen lassen: naechster Rescan (Datei
+                    // unveraendert -> gleiche Auto-Tags) soll diesen Tag nicht
+                    // erneut anhaengen. lib/auto-tags.js liest removedAutoTags.
+                    patch.autoTags = autoTags.filter(t => t.toLowerCase() !== tag.toLowerCase());
+                    const removedAuto = meta?.removedAutoTags ?? [];
+                    if (!removedAuto.some(t => t.toLowerCase() === tag.toLowerCase())) {
+                        patch.removedAutoTags = [...removedAuto, tag];
+                    }
+                }
+                await metadata.update(filename, patch);
+                auditLog.log('tag_removed', { ip: req.ip, filename, tag });
+            }
+            res.json({ tags });
+        } catch (err) {
+            next(err);
+        }
+    });
+
     app.get('/logout', (req, res) => {
         req.session.destroy(() => {
             res.clearCookie('iso.sid');
@@ -1146,8 +1287,10 @@ function createApp(options = {}) {
     app.get('/search', async (req, res, next) => {
         const query = String(req.query.q || '').slice(0, 200);
         try {
+            const [files, allTags] = await Promise.all([listFiles(query), listAllTags()]);
             res.render('index', {
-                files: await listFiles(query),
+                files,
+                allTags,
                 searchQuery: query,
                 loggedIn: Boolean(req.session && req.session.loggedIn),
             });
