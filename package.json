@@ -13,11 +13,11 @@
   "dependencies": {
     "@simplewebauthn/server": "^14.0.2",
     "ejs": "^3.1.10",
-    "express": "^5.1.0",
+    "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "express-session": "^1.18.1",
     "helmet": "^8.3.0",
-    "multer": "^2.3.0"
+    "multer": "^2.4.0"
   },
   "engines": {
     "node": ">=22.5.0"
