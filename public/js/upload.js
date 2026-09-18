@@ -29,6 +29,7 @@
   var previewSize = document.getElementById("filePreviewSize");
   var resume = document.getElementById("uploadResume");
   var resumeText = document.getElementById("uploadResumeText");
+  var replacesSelect = document.getElementById("uploadReplaces");
   var progress = document.getElementById("uploadProgress");
   var bar = document.getElementById("uploadProgressBar");
   var percentLabel = document.getElementById("uploadPercent");
@@ -65,6 +66,11 @@
     percentLabel.textContent = percent + " %";
     transferLabel.textContent =
       formatSize(loaded) + " von " + formatSize(total);
+    // Ein groszer Upload kann laenger als der Idle-Timeout dauern, ohne
+    // dass zwischendurch ein Tab gewechselt wird — echter Fortschritt zaehlt
+    // darum als Aktivitaet, sonst reiszt der clientseitige Countdown die
+    // laufende Uebertragung mitten im Transfer weg (siehe idle-timer.js).
+    if (window.isoShareIdleTimer) window.isoShareIdleTimer.markActive();
   }
 
   function setBusy(busy) {
@@ -283,11 +289,12 @@
     var done = await response.json();
 
     try {
-      sessionStorage.setItem(
-        "iso-share-flash",
-        (done.filename || current.file.name) +
-        " wurde hochgeladen. Checksumme wird berechnet."
-      );
+      var message = (done.filename || current.file.name) +
+        " wurde hochgeladen. Checksumme wird berechnet.";
+      if (done.replaced) {
+        message += " „" + done.replaced + "“ wurde als alte Version entfernt.";
+      }
+      sessionStorage.setItem("iso-share-flash", message);
     } catch (e) {
       // Ohne sessionStorage entfaellt nur die Bestaetigung nach dem Reload
     }
@@ -306,6 +313,7 @@
       response = await postJson("/upload/init", {
         name: file.name,
         size: file.size,
+        replaces: replacesSelect && replacesSelect.value ? replacesSelect.value : undefined,
       });
     } catch (e) {
       fail("Netzwerkfehler beim Start des Uploads.");

@@ -22,7 +22,7 @@ async function startTestApp(overrides = {}) {
     const instance = createApp({
         uploadsDir: path.join(root, 'uploads'),
         tmpDir: path.join(root, 'tmp-uploads'),
-        sessionDir: path.join(root, 'sessions'),
+        dataDir: path.join(root, 'data'),
         adminPassword: 'korrekt-horse-battery',
         sessionSecret: 'test-secret',
         maxFileSizeMb: 1,

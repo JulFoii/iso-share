@@ -108,23 +108,33 @@
   }
 
   if (disableButton) {
+    var disableDialog = document.getElementById("totpDisableDialog");
+    var disableConfirm = document.getElementById("totpDisableConfirm");
+
     disableButton.addEventListener("click", function () {
-      if (!window.confirm("Zwei-Faktor-Authentifizierung wirklich deaktivieren?")) return;
-      disableButton.disabled = true;
-      postJson("/totp/disable")
-        .then(function (res) {
-          if (!res.ok) return readError(res, "Deaktivieren fehlgeschlagen.").then(function (msg) {
-            throw new Error(msg);
-          });
-          setEnabledUi(false);
-          notify("TOTP deaktiviert.", "success");
-        })
-        .catch(function (err) {
-          notify(err.message || "Deaktivieren fehlgeschlagen.", "error");
-        })
-        .finally(function () {
-          disableButton.disabled = false;
-        });
+      if (!disableDialog) return;
+      disableDialog.showModal();
     });
+
+    if (disableDialog && disableConfirm) {
+      disableConfirm.addEventListener("click", function () {
+        disableConfirm.disabled = true;
+        postJson("/totp/disable")
+          .then(function (res) {
+            if (!res.ok) return readError(res, "Deaktivieren fehlgeschlagen.").then(function (msg) {
+              throw new Error(msg);
+            });
+            disableDialog.close();
+            setEnabledUi(false);
+            notify("TOTP deaktiviert.", "success");
+          })
+          .catch(function (err) {
+            notify(err.message || "Deaktivieren fehlgeschlagen.", "error");
+          })
+          .finally(function () {
+            disableConfirm.disabled = false;
+          });
+      });
+    }
   }
 })();

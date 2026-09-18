@@ -1,0 +1,16 @@
+<%
+/*
+ * admin.ejs zeigt die Tag-Filterleiste in einer eigenen, umrandeten
+ * card__toolbar-Zeile — anders als index.ejs, wo sie ohne eigene Box direkt
+ * unter dem Suchfeld sitzt. Als eigenes Partial ausgelagert, damit die Box
+ * nur erscheint, wenn es Tags gibt (kein leerer Rahmen), UND damit
+ * server.js' Heartbeat-Fragment-Route (GET /admin/partials/listing) exakt
+ * dasselbe Markup liefert wie das erste Server-Side-Render — heartbeat.js
+ * ersetzt nur den Inhalt des aeusseren [data-tag-filter], nie dessen Klassen.
+ */
+%>
+<% if (typeof allTags !== 'undefined' && allTags.length > 0) { %>
+  <div class="card__toolbar">
+    <%- include('tag-filter', { allTags, searchQuery, searchBase }) %>
+  </div>
+<% } %>

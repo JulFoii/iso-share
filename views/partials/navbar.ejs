@@ -18,6 +18,13 @@
 
       <% if (isLoggedIn) { %>
         <a class="nav__link" href="/admin-upload" <%= currentPage === 'admin' ? 'aria-current="page"' : '' %>>Verwaltung</a>
+        <span
+          class="badge badge--mono"
+          data-idle-remaining
+          data-idle-timeout-ms="<%= adminIdleTimeoutMs %>"
+          title="Automatische Abmeldung nach Inaktivität"
+          aria-live="polite"
+          hidden></span>
         <a class="nav__link" href="/logout">Abmelden</a>
       <% } else { %>
         <a class="nav__link" href="/login" <%= currentPage === 'login' ? 'aria-current="page"' : '' %>>Anmelden</a>

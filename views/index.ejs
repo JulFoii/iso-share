@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head', { title: 'ISO-Images', description: 'Verfügbare ISO-Images herunterladen — ISO Share.' }) %>
 </head>
-<body>
+<body data-heartbeat="public">
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <%- include('partials/navbar', { page: 'index', loggedIn }) %>
 
@@ -13,7 +13,7 @@
       <h1 class="page-header__title">ISO-Images</h1>
       <p class="page-header__meta">
         <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
-        <span><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <span data-total-size><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
         <% if (files.length > 0) { %>
           <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
         <% } %>
@@ -43,7 +43,9 @@
             <a class="search__reset" href="/" aria-label="Suche zurücksetzen" title="Suche zurücksetzen">×</a>
           <% } %>
         </form>
-        <%- include('partials/tag-filter', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/search' }) %>
+        <div data-tag-filter>
+          <%- include('partials/tag-filter', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/search' }) %>
+        </div>
       <% } %>
 
       <div class="card card--flush reveal">
@@ -95,10 +97,8 @@
                   <th scope="col"><span class="visually-hidden">Aktionen</span></th>
                 </tr>
               </thead>
-              <tbody>
-                <% files.forEach((file, index) => { %>
-                  <%- include('partials/file-row', { file, index, admin: false }) %>
-                <% }); %>
+              <tbody data-file-rows>
+                <%- include('partials/file-rows', { files, admin: false }) %>
               </tbody>
             </table>
           </div>
@@ -122,10 +122,12 @@
 <%- include('partials/footer') %>
 
 <script src="/js/theme.js" defer></script>
+<script src="/js/idle-timer.js" defer></script>
 <script src="/js/filetable.js" defer></script>
 <script src="/js/row-details.js" defer></script>
 <script src="/js/copy.js" defer></script>
 <script src="/js/toast.js" defer></script>
 <script src="/js/bulk-actions.js" defer></script>
+<script src="/js/heartbeat.js" defer></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head', { title: 'Verwaltung' }) %>
 </head>
-<body>
+<body data-heartbeat="admin">
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <%- include('partials/navbar', { page: 'admin', loggedIn: true }) %>
 
@@ -13,7 +13,7 @@
       <h1 class="page-header__title">Verwaltung</h1>
       <p class="page-header__meta">
         <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
-        <span><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <span data-total-size><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
         <% if (files.length > 0) { %>
           <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
         <% } %>
@@ -74,6 +74,22 @@
               <span class="badge file-preview__size" id="filePreviewSize"></span>
             </div>
 
+            <% if (files.length > 0) { %>
+              <div class="field">
+                <label class="label" for="uploadReplaces">Ersetzt vorhandene Datei (optional)</label>
+                <select class="input" id="uploadReplaces" name="replaces">
+                  <option value="">— keine, als neue Datei hochladen —</option>
+                  <% files.forEach(file => { %>
+                    <option value="<%= file.name %>"><%= file.name %></option>
+                  <% }) %>
+                </select>
+                <span class="hint">
+                  Nützlich bei einer neueren Version unter anderem Namen — die
+                  gewählte Datei wird nach erfolgreichem Upload automatisch gelöscht.
+                </span>
+              </div>
+            <% } %>
+
             <!-- Wird von upload.js gefuellt, wenn der Server zu dieser Datei
                  noch eine offene Upload-Sitzung hat. -->
             <div class="alert alert--info" id="uploadResume" hidden>
@@ -101,7 +117,8 @@
               <span class="hint">
                 Große Images werden in Blöcken übertragen und lassen sich nach
                 einem Abbruch fortsetzen. Bestehende Dateien mit gleichem Namen
-                werden überschrieben.
+                werden überschrieben, inhaltsgleiche Dateien unter anderem
+                Namen abgelehnt.
               </span>
             </div>
           </form>
@@ -147,11 +164,9 @@
               <% } %>
             </form>
           </div>
-          <% if (typeof allTags !== 'undefined' && allTags.length > 0) { %>
-            <div class="card__toolbar">
-              <%- include('partials/tag-filter', { allTags: allTags, searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/admin-search' }) %>
-            </div>
-          <% } %>
+          <div data-tag-filter>
+            <%- include('partials/tag-filter-panel', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/admin-search' }) %>
+          </div>
 
           <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
             <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
@@ -190,10 +205,8 @@
                   <th scope="col"><span class="visually-hidden">Aktionen</span></th>
                 </tr>
               </thead>
-              <tbody>
-                <% files.forEach((file, index) => { %>
-                  <%- include('partials/file-row', { file, index, admin: true }) %>
-                <% }); %>
+              <tbody data-file-rows>
+                <%- include('partials/file-rows', { files, admin: true }) %>
               </tbody>
             </table>
           </div>
@@ -220,9 +233,7 @@
         </div>
         <div class="card__body">
           <ul class="stack" id="passkeyList">
-            <% passkeys.forEach(passkey => { %>
-              <%- include('partials/passkey-row', { passkey }) %>
-            <% }); %>
+            <%- include('partials/passkey-rows', { passkeys }) %>
             <% if (passkeys.length === 0) { %>
               <li class="empty" data-passkey-empty>
                 <p class="empty__title">Keine Passkeys</p>
@@ -233,6 +244,32 @@
           <div class="row mt-4">
             <button type="button" class="btn btn--secondary" id="passkeyAddButton" hidden>Passkey hinzufügen</button>
             <span class="hint" id="passkeyUnsupportedHint">Dieser Browser unterstützt keine Passkeys.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- API-Tokens -->
+      <section class="card reveal" aria-labelledby="api-tokens-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="api-tokens-heading">API-Tokens</h2>
+          <a class="btn btn--ghost btn--sm" href="/openapi.json" target="_blank" rel="noopener">API-Dokumentation</a>
+        </div>
+        <div class="card__body">
+          <p class="hint mb-4">
+            Zugriff auf <code class="mono">/api/v1</code> für Skripte und CI, unabhängig
+            von der Sitzung — per <code class="mono">Authorization: Bearer &lt;token&gt;</code>.
+          </p>
+          <ul class="stack" id="apiTokenList">
+            <%- include('partials/token-rows', { apiTokens }) %>
+            <% if (apiTokens.length === 0) { %>
+              <li class="empty" data-token-empty>
+                <p class="empty__title">Keine API-Tokens</p>
+                <p class="empty__text">Erstelle ein Token, um Dateien per Skript hoch-/herunterzuladen oder zu verwalten.</p>
+              </li>
+            <% } %>
+          </ul>
+          <div class="row mt-4">
+            <button type="button" class="btn btn--secondary" id="apiTokenAddButton">Token erstellen</button>
           </div>
         </div>
       </section>
@@ -263,18 +300,15 @@
           <a class="btn btn--ghost btn--sm" href="/admin-audit-log">Alle ansehen</a>
         </div>
         <div class="card__body">
-          <% if (auditEntries.length === 0) { %>
-            <p class="hint">Noch keine Einträge.</p>
-          <% } else { %>
-            <ul class="stack">
-              <% auditEntries.forEach(entry => { %>
-                <li class="row row--between">
-                  <span><span class="badge badge--mono"><%= entry.event %></span> <span class="hint"><%= entry.ip || '' %></span></span>
-                  <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= new Date(entry.ts).toLocaleTimeString('de-DE') %></time>
-                </li>
-              <% }); %>
-            </ul>
-          <% } %>
+          <p class="hint" id="auditWidgetEmpty" <%= auditEntries.length > 0 ? 'hidden' : '' %>>Noch keine Einträge.</p>
+          <ul class="stack" id="auditWidgetList" <%= auditEntries.length > 0 ? '' : 'hidden' %>>
+            <% auditEntries.slice(0, 8).forEach(entry => { %>
+              <li class="row row--between" data-audit-id="<%= entry.id %>">
+                <span><span class="badge badge--mono"><%= entry.event %></span> <span class="hint"><%= entry.ip || '' %></span></span>
+                <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= new Date(entry.ts).toLocaleTimeString('de-DE') %></time>
+              </li>
+            <% }); %>
+          </ul>
         </div>
       </section>
     </div>
@@ -405,6 +439,21 @@
 
 <%- include('partials/footer') %>
 
+<dialog class="dialog" id="passkeyDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Passkey entfernen?</h2>
+      <p class="dialog__text">
+        Mit diesem Passkey ist danach keine Anmeldung mehr möglich.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="passkeyDeleteConfirm">Entfernen</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog class="dialog" id="usernameResultDialog">
   <form method="dialog">
     <div class="dialog__body">
@@ -475,6 +524,79 @@
   </form>
 </dialog>
 
+<dialog class="dialog" id="totpDisableDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Zwei-Faktor-Authentifizierung deaktivieren?</h2>
+      <p class="dialog__text">
+        Die Anmeldung ist danach wieder nur mit Passwort (bzw. Passkey) möglich.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="totpDisableConfirm">Deaktivieren</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="apiTokenCreateDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">API-Token erstellen</h2>
+      <div class="field">
+        <label class="label" for="apiTokenLabel">Bezeichnung (optional)</label>
+        <input class="input" type="text" id="apiTokenLabel" maxlength="64" placeholder="z. B. CI-Pipeline">
+      </div>
+      <div class="field">
+        <label class="label">Berechtigungen</label>
+        <label class="row"><input type="checkbox" id="apiTokenScopeRead" checked> Lesen</label>
+        <label class="row"><input type="checkbox" id="apiTokenScopeWrite"> Schreiben (Upload, Löschen, Tags)</label>
+      </div>
+      <p class="hint" id="apiTokenCreateError"></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--primary" id="apiTokenCreateConfirm">Erstellen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog dialog--fit" id="apiTokenResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Token erstellt</h2>
+      <p class="dialog__text">
+        Wird jetzt nur einmal angezeigt — danach ist es nicht mehr abrufbar. Jetzt sichern.
+      </p>
+      <div class="field">
+        <label class="label">Token</label>
+        <div class="row">
+          <code class="mono nowrap" id="apiTokenResultValue"></code>
+          <button type="button" class="btn btn--ghost btn--sm" id="apiTokenResultCopy" data-copy-label="Token kopiert">Kopieren</button>
+        </div>
+      </div>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">Gesichert</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="apiTokenDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Token widerrufen?</h2>
+      <p class="dialog__text">
+        Skripte, die es verwenden, funktionieren danach sofort nicht mehr.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="apiTokenDeleteConfirm">Widerrufen</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog class="dialog" id="bulkDeleteDialog">
   <form method="dialog">
     <div class="dialog__body">
@@ -509,6 +631,7 @@
 </dialog>
 
 <script src="/js/theme.js" defer></script>
+<script src="/js/idle-timer.js" defer></script>
 <script src="/js/toast.js" defer></script>
 <script src="/js/admin-tabs.js" defer></script>
 <script src="/js/filetable.js" defer></script>
@@ -520,7 +643,9 @@
 <script src="/js/upload.js" defer></script>
 <script src="/js/webauthn.js" defer></script>
 <script src="/js/totp.js" defer></script>
+<script src="/js/api-tokens.js" defer></script>
 <script src="/js/password-toggle.js" defer></script>
 <script src="/js/account-forms.js" defer></script>
+<script src="/js/heartbeat.js" defer></script>
 </body>
 </html>

@@ -1276,6 +1276,12 @@ body::after {
   color: var(--success);
 }
 
+.badge--warning {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
 .alert {
   display: flex;
   gap: var(--space-3);
@@ -1516,6 +1522,21 @@ body::after {
 .dialog__text {
   font-size: var(--text-sm);
   color: var(--text-muted);
+  /* Deckelt die bevorzugte Breite des Texts, damit .dialog--fit (das seine
+     Breite am breitesten Kindelement ausrichtet) nicht durch einen langen
+     Fliesstext unnoetig aufgeblasen wird — er soll weiterhin normal umbrechen. */
+  max-width: 26rem;
+}
+
+/*
+ * Fuer Dialoge, deren Inhalt (z. B. ein API-Token) laenger als die
+ * Standardbreite sein kann: Breite richtet sich nach dem Inhalt statt nach
+ * einem festen Wert, damit z. B. ein Token immer auf einer Zeile passt.
+ */
+.dialog--fit {
+  width: fit-content;
+  min-width: min(26rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
 }
 
 .dialog__footer {
@@ -1752,11 +1773,24 @@ body::after {
   font-family: var(--font-mono);
 }
 
+.nowrap {
+  white-space: nowrap;
+}
+
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+  transition: background var(--transition);
+}
+
+/* Kurzer Hintergrund-Flash fuer Zeilen/Listeneintraege, die public/js/
+   heartbeat.js gerade eingefuegt oder aktualisiert hat — Klasse wird nach
+   kurzer Zeit wieder entfernt, das Ausblenden uebernimmt die ohnehin
+   vorhandene background-Transition der Zeile (.table tbody tr bzw. .row). */
+.is-updated {
+  background: var(--accent-subtle);
 }
 
 .row--between {

@@ -68,6 +68,12 @@
     }
   });
 
+  // Der Heartbeat (public/js/heartbeat.js) kann Zeilen ersetzen/entfernen und
+  // uebertraegt dabei den Checkbox-Zustand auf die neue Zeile, feuert aber
+  // kein "change" — ohne diesen Listener wuerden Leiste/Zaehler nach so
+  // einem Patch nicht mehr zur tatsaechlichen Auswahl passen.
+  table.addEventListener("table:changed", refresh);
+
   if (clearButton) {
     clearButton.addEventListener("click", function () {
       checkboxes().forEach(function (box) { box.checked = false; });

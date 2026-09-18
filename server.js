@@ -35,16 +35,21 @@ const path = require('path');
 
 const {
     safeIsoName, safeUploadId, safeCredentialId, safePasskeyLabel, safeUsername, safeTag,
+    safeApiTokenId, safeApiTokenLabel,
 } = require('./lib/safe-name');
 const { moveFile } = require('./lib/move-file');
+const { openDatabase } = require('./lib/db');
+const { migrateLegacyData } = require('./lib/migrate-legacy');
 const { createMetadataStore } = require('./lib/metadata');
-const { createHashQueue } = require('./lib/hash-queue');
+const { createHashQueue, sha256OfFile } = require('./lib/hash-queue');
 const { createUploadSessions, UploadError } = require('./lib/chunked-upload');
-const { FileSessionStore } = require('./lib/session-store');
+const { SqliteSessionStore } = require('./lib/session-store');
+const { createSessionSecretStore } = require('./lib/session-secret-store');
 const { createWebauthnStore } = require('./lib/webauthn-store');
 const { createPasswordStore } = require('./lib/password-store');
 const { createUsernameStore } = require('./lib/username-store');
 const { createTotpStore } = require('./lib/totp-store');
+const { createApiTokenStore } = require('./lib/api-token-store');
 const { generateSecret, verifyTotp, buildOtpauthUri } = require('./lib/totp');
 const { createAuditLog } = require('./lib/audit-log');
 const { writeZip, fitsInClassicZip } = require('./lib/zip-stream');
@@ -58,6 +63,11 @@ const DEFAULT_ADMIN_USERNAME = 'admin';
 const STALE_UPLOAD_SWEEP_MS = 60 * 60 * 1000;
 const MAX_BULK_FILES = 100;
 const MAX_TAGS_PER_FILE = 15;
+// Getrennt von der festen 24h-Cookie-Laufzeit (siehe cookie.maxAge unten):
+// eine angemeldete, aber laenger unbeobachtete Admin-Session gilt ab hier als
+// abgelaufen, unabhaengig davon, wie lange das Cookie selbst noch gueltig
+// waere.
+const ADMIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /* ==========================================================================
    App-Aufbau
@@ -71,8 +81,8 @@ function createApp(options = {}) {
     const {
         uploadsDir = path.join(__dirname, 'uploads'),
         tmpDir = path.join(__dirname, 'tmp-uploads'),
-        sessionDir = process.env.SESSION_DIR
-            || path.join(__dirname, 'data', 'sessions'),
+        dataDir = process.env.DATA_DIR
+            || path.join(__dirname, 'data'),
         maxFileSizeMb = Number(process.env.MAX_FILE_SIZE_MB)
             || DEFAULT_MAX_FILE_SIZE_MB,
         isProd = process.env.NODE_ENV === 'production',
@@ -86,56 +96,74 @@ function createApp(options = {}) {
         scanOnStart = true,
         sweepStaleUploads = true,
         log = console,
+        // Tests uebergeben hier einen winzigen Wert statt echter 10 Minuten.
+        adminIdleTimeoutMs = ADMIN_IDLE_TIMEOUT_MS,
     } = options;
 
     const UPLOADS_DIR = path.resolve(uploadsDir);
     const TMP_DIR = path.resolve(tmpDir);
+    const DATA_DIR = path.resolve(dataDir);
     const MAX_FILE_SIZE_MB = maxFileSizeMb;
     const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+    const IDLE_TIMEOUT_MS = adminIdleTimeoutMs;
+
+    /*
+     * Eine einzige SQLite-Datenbank fuer alles, was frueher als JSON-Dateien
+     * unter data/ und uploads/.meta/ lag (siehe lib/db.js). Synchron ge-
+     * oeffnet, weil DatabaseSync selbst synchron ist und dies nur einmal
+     * beim App-Aufbau passiert, nie in einem Request-Handler.
+     */
+    const db = openDatabase(path.join(DATA_DIR, 'iso-share.db'));
 
     /* ----------------------------------------------------------- Secrets --
-       Kein funktionsfaehiger Default. Ist ADMIN_PASSWORD gesetzt, bleibt es
-       die feste, vom Betreiber gewaehlte Quelle (SHA-256 vorab, damit der
-       Vergleich zeitkonstant und unabhaengig von der Laenge laeuft). Ist es
-       NICHT gesetzt, wird kein Passwort synchron erzeugt — das passiert erst
-       async in start() und dann nur EINMAL: dort wird geprueft, ob schon ein
-       Passwort im persistenten Store (lib/password-store.js) liegt, und nur
-       wenn nicht, eines erzeugt, dort gespeichert und geloggt. Ohne dieses
-       Umleiten ueber den Store waere das generierte Passwort bei jedem
-       Neustart ein anderes — das Gegenteil von "fest". */
+       Bootstrap-Prinzip (siehe auch der Kommentar oben in lib/db.js): der aus
+       Env-Var/Option berechnete Wert wird beim allerersten Start persistiert
+       und gewinnt danach dauerhaft — eine spaeter geaenderte Env-Var wirkt
+       sich nicht mehr aus, dieselbe Regel wie bei einer expliziten Aenderung
+       ueber die Admin-UI. Ein Geheimnis, das dauerhaft in einer Env-Var
+       steht, ist im Produktivbetrieb die schlechtere Aufbewahrung als die DB. */
 
     let ADMIN_PASSWORD = passwordOption ?? process.env.ADMIN_PASSWORD;
     const PASSWORD_HASH = ADMIN_PASSWORD
         ? crypto.createHash('sha256').update(ADMIN_PASSWORD).digest()
         : null;
 
-    let SESSION_SECRET = secretOption ?? process.env.SESSION_SECRET;
+    /*
+     * Der Session-Signierschluessel wird SYNCHRON persistiert, weil er noch
+     * vor app.use(session(...)) unten feststehen muss — also vor dem
+     * asynchronen start(). Erster Start: der aus SESSION_SECRET/Option
+     * berechnete oder frisch generierte Wert wird sofort in die DB
+     * geschrieben. Jeder weitere Start liest denselben Wert zurueck, egal was
+     * SESSION_SECRET inzwischen sagt — ohne das wuerde ein Neustart ohne
+     * gesetzte Env-Var alle Sitzungen ungueltig machen.
+     */
+    const sessionSecretStore = createSessionSecretStore({ db });
+    let SESSION_SECRET = sessionSecretStore.read();
     if (!SESSION_SECRET) {
-        SESSION_SECRET = crypto.randomBytes(32).toString('hex');
-        log.warn(
-            '⚠️  SESSION_SECRET ist nicht gesetzt — es wird ein flüchtiges pro Start\n' +
-            '    erzeugt. Bestehende Sitzungen gehen bei jedem Neustart verloren.\n'
-        );
+        const candidate = secretOption ?? process.env.SESSION_SECRET
+            ?? crypto.randomBytes(32).toString('hex');
+        if (!secretOption && !process.env.SESSION_SECRET) {
+            log.warn(
+                '⚠️  Kein SESSION_SECRET gesetzt — es wird jetzt einmalig ein zufälliges\n' +
+                '    erzeugt und dauerhaft in der Datenbank gespeichert.\n'
+            );
+        }
+        SESSION_SECRET = sessionSecretStore.ensure(candidate);
     }
 
-    const passwordStore = createPasswordStore({
-        file: path.join(path.dirname(sessionDir), 'admin-password.json'),
-    });
+    const passwordStore = createPasswordStore({ db });
+    const usernameStore = createUsernameStore({ db });
 
     /*
-     * Anders als das Passwort ist ein Benutzername kein Geheimnis: kein
-     * Zufalls-Bootstrap noetig, der Default 'admin' ist schon ueber
-     * Neustarts hinweg deterministisch fix. Der Store wird erst durch einen
-     * expliziten Aufruf von /admin-username befuellt.
+     * ADMIN_USERNAME bleibt der Default/die Env-Var, bis start() (siehe
+     * unten) den ersten Wert in die DB schreibt oder /admin-username ihn
+     * explizit aendert — danach gewinnt in beiden Faellen die DB.
      */
     const ADMIN_USERNAME = usernameOption ?? process.env.ADMIN_USERNAME ?? DEFAULT_ADMIN_USERNAME;
-    const usernameStore = createUsernameStore({
-        file: path.join(path.dirname(sessionDir), 'admin-username.json'),
-    });
 
     /*
      * Ein einmal ueber /admin-password gesetztes (oder beim ersten Start
-     * automatisch erzeugtes, siehe start()) Passwort gewinnt dauerhaft
+     * automatisch bootstrappedes, siehe start()) Passwort gewinnt dauerhaft
      * gegenueber ADMIN_PASSWORD, auch nach einem Neustart. Ohne persistierten
      * Hash bleibt der Weg ueber PASSWORD_HASH bestehen — der greift aber nur,
      * wenn ADMIN_PASSWORD tatsaechlich vom Betreiber gesetzt wurde; ist beides
@@ -156,22 +184,21 @@ function createApp(options = {}) {
 
     /* --------------------------------------------------------- Dienste -- */
 
-    const metadata = createMetadataStore({
-        dir: path.join(UPLOADS_DIR, '.meta'),
-    });
+    const metadata = createMetadataStore({ db });
     const hashQueue = createHashQueue({
         uploadsDir: UPLOADS_DIR, metadata, log, maxAutoTags: MAX_TAGS_PER_FILE,
     });
     const uploadSessions = createUploadSessions({
+        db,
         tmpDir: TMP_DIR,
         uploadsDir: UPLOADS_DIR,
         maxBytes: MAX_FILE_SIZE_BYTES,
     });
-    const sessionStore = new FileSessionStore({ dir: sessionDir });
-    const webauthnStore = createWebauthnStore({ dir: path.join(UPLOADS_DIR, '.meta') });
-    const totpStore = createTotpStore({ dir: path.join(UPLOADS_DIR, '.meta') });
-    // Gleicher data/-Ordner wie passwordStore/usernameStore (siehe dort).
-    const auditLog = createAuditLog({ file: path.join(path.dirname(sessionDir), 'audit.log') });
+    const sessionStore = new SqliteSessionStore({ db });
+    const webauthnStore = createWebauthnStore({ db });
+    const totpStore = createTotpStore({ db });
+    const auditLog = createAuditLog({ db });
+    const apiTokenStore = createApiTokenStore({ db });
 
     const app = express();
 
@@ -217,6 +244,10 @@ function createApp(options = {}) {
 
     app.set('view engine', 'ejs');
     app.set('views', path.join(__dirname, 'views'));
+    // In jedem render() verfuegbar, ohne dass jede Route sie einzeln
+    // durchreichen muss — public/js/idle-timer.js liest sie ueber
+    // partials/navbar.ejs aus dem Abmelden-Link.
+    app.locals.adminIdleTimeoutMs = IDLE_TIMEOUT_MS;
 
     // Nur public/ statisch ausliefern. uploads/ wird bewusst NICHT eingebunden
     // — Downloads laufen ausschliesslich ueber die /download-Route mit
@@ -285,6 +316,16 @@ function createApp(options = {}) {
     }
 
     app.use((req, res, next) => {
+        // /api/v1 ist Token-authentifiziert (Authorization: Bearer ...), nicht
+        // Cookie-authentifiziert — die Session traegt dort gar keine
+        // Berechtigung (checkApiToken sieht req.session nie an). Ein
+        // CSRF-Request mit dem Opfer-Cookie im Gepaeck kommt darum ohnehin nie
+        // durch, der sameOrigin-Check waere hier nur ein falsch-positiver
+        // Blocker fuer legitime Skript-/CI-Clients ohne passenden Origin/
+        // Referer-Header.
+        if (req.path.startsWith('/api/v1/')) {
+            return next();
+        }
         if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
             return sameOrigin(req, res, next);
         }
@@ -351,6 +392,55 @@ function createApp(options = {}) {
         standardHeaders: true,
         legacyHeaders: false,
         message: 'Zu viele Download-Anfragen. Bitte kurz warten.',
+    });
+
+    // Genereller Schutz gegen ausser Kontrolle geratene Skripte auf der
+    // gesamten /api/v1-Flaeche (Lesen wie Schreiben) — die HTML-Seiten haben
+    // kein Aequivalent, weil dort ein Browser, kein Loop-Skript, anfragt.
+    const apiLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 300,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Zu viele Anfragen. Bitte kurz warten.', code: 'rate_limited' },
+    });
+
+    // Gleiches Zwei-Ebenen-Prinzip wie beim Login (siehe oben), angewandt auf
+    // fehlgeschlagene Token-Pruefungen. Defense-in-depth: ein 256-Bit-Token
+    // ist ohnehin nicht brute-forcebar, aber die Instanzen kosten nichts und
+    // halten das Muster konsistent mit /login.
+    const API_TOO_MANY = { error: 'Zu viele fehlgeschlagene Anfragen.', code: 'rate_limited' };
+
+    const apiAuthLimiterPerIp = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 30,
+        standardHeaders: true,
+        legacyHeaders: false,
+        skipSuccessfulRequests: true,
+        message: API_TOO_MANY,
+    });
+
+    const apiAuthLimiterGlobal = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 300,
+        standardHeaders: false,
+        legacyHeaders: false,
+        skipSuccessfulRequests: true,
+        keyGenerator: () => 'global',
+        message: API_TOO_MANY,
+    });
+
+    // Heartbeat-Fragmente (siehe /partials/listing, /admin/partials/listing
+    // weiter unten) werden von public/js/heartbeat.js alle 20s automatisch
+    // abgefragt — grosszuegiger als apiLimiter noetig waere (ein Tab erzeugt
+    // hoechstens 3 Requests/Minute), aber mehrere offene Tabs/Fenster sollen
+    // nicht gegenseitig blockieren.
+    const pollLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 40,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Zu viele Anfragen. Bitte kurz warten.', code: 'rate_limited' },
     });
 
     /* ----------------------------------------------- Multipart-Fallback --
@@ -450,8 +540,69 @@ function createApp(options = {}) {
         return [...seen.values()].sort((a, b) => a.localeCompare(b, 'de'));
     }
 
+    /* --------------------------------------------------- API-v1-Helfer --
+       Paginierung/Sortierung nur fuer /api/v1/files — die HTML-Seiten zeigen
+       ohnehin die komplette Liste (Single-Admin-Datenmenge), ein Skript, das
+       gegen die API laeuft, will dagegen typischerweise nicht 500 Zeilen JSON
+       auf einmal. */
+
+    const API_SORTERS = {
+        name: (a, b) => a.name.localeCompare(b.name, 'de'),
+        '-name': (a, b) => b.name.localeCompare(a.name, 'de'),
+        downloads: (a, b) => a.downloads - b.downloads,
+        '-downloads': (a, b) => b.downloads - a.downloads,
+        size: (a, b) => a.size - b.size,
+        '-size': (a, b) => b.size - a.size,
+    };
+
+    function parsePageParams(query) {
+        const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+        const perPage = Math.min(200, Math.max(1, Number.parseInt(query.perPage, 10) || 50));
+        return { page, perPage };
+    }
+
+    function paginate(items, { page, perPage }) {
+        const total = items.length;
+        const totalPages = Math.max(1, Math.ceil(total / perPage));
+        const clampedPage = Math.min(page, totalPages);
+        const start = (clampedPage - 1) * perPage;
+        return {
+            data: items.slice(start, start + perPage),
+            meta: { page: clampedPage, perPage, total, totalPages },
+        };
+    }
+
     function checkAuth(req, res, next) {
         if (req.session && req.session.loggedIn) {
+            // Idle-Timeout: getrennt von der 24h-Cookie-Laufzeit (siehe
+            // session()-Konfiguration oben) und nur fuer bereits
+            // eingeloggte Sessions relevant. lastActivity fehlt nur bei
+            // einer Session aus der Zeit vor diesem Feature — dann zaehlt
+            // der erste Zugriff danach als Start des Idle-Fensters, statt
+            // sofort abzulaufen.
+            const now = Date.now();
+            const lastActivity = req.session.lastActivity ?? now;
+            if (now - lastActivity > IDLE_TIMEOUT_MS) {
+                auditLog.log('session_idle_timeout', { ip: req.ip });
+                return req.session.destroy(() => {
+                    res.clearCookie('iso.sid');
+                    if (req.accepts(['html', 'json']) === 'json') {
+                        return res.status(401).json({ error: 'Sitzung wegen Inaktivität abgelaufen.' });
+                    }
+                    res.redirect('/login?idle=1');
+                });
+            }
+            // heartbeat.js fragt admin/partials/listing automatisch alle 20s
+            // ab, solange die Seite offen und sichtbar ist — auch wenn der
+            // Admin laengst nicht mehr da ist. Zaehlte das als Aktivitaet,
+            // wuerde ein einfach offen gelassener Tab den Idle-Timeout
+            // komplett aushebeln. Nur idle-timer.js' Keepalive-Ping
+            // (/admin/ping, ausgeloest durch echte Maus-/Tastatureingaben)
+            // und normale Navigations-/Formular-Requests verlaengern die
+            // Sitzung wirklich.
+            if (req.get('X-Idle-Background') !== '1') {
+                req.session.lastActivity = now;
+            }
             return next();
         }
         if (req.accepts(['html', 'json']) === 'json') {
@@ -466,23 +617,77 @@ function createApp(options = {}) {
     }
 
     /*
+     * Token-Authentifizierung fuer /api/v1 (Skripte, CI) — vollstaendig
+     * getrennt von checkAuth/der Session, siehe Design-Kommentar bei der
+     * sameOrigin-Ausnahme oben. Ein Token kann nur erzeugen, wer schon eine
+     * gueltige Session hat (POST /admin/api-tokens, checkAuth-gated) — es
+     * gibt keinen API-Weg, sich selbst ein erstes Token auszustellen, genau
+     * wie bei Passkeys. Antwortet immer JSON, nie ein Redirect: anders als
+     * checkAuth gibt es hier kein Login-Formular, zu dem man zurueck koennte.
+     * Gibt ein Array zurueck (Rate-Limiter + eigentliche Pruefung), Express
+     * flacht das als Middleware-Liste automatisch ab.
+     */
+    function checkApiToken(requiredScope) {
+        return [
+            apiAuthLimiterGlobal,
+            apiAuthLimiterPerIp,
+            async (req, res, next) => {
+                const match = /^Bearer\s+(\S+)$/.exec(req.get('authorization') || '');
+                if (!match) {
+                    return res.status(401).json({ error: 'Kein Token angegeben.', code: 'missing_token' });
+                }
+                const record = await apiTokenStore.findByToken(match[1]);
+                if (!record) {
+                    return res.status(401).json({ error: 'Ungültiges Token.', code: 'invalid_token' });
+                }
+                if (requiredScope && !record.scopes.includes(requiredScope)) {
+                    return res.status(403).json({
+                        error: 'Token hat nicht die nötige Berechtigung.', code: 'insufficient_scope',
+                    });
+                }
+                req.apiToken = record;
+                next();
+            },
+        ];
+    }
+
+    /*
+     * Rendert ein View-Partial zu einem HTML-String statt es direkt zu
+     * senden — Grundlage der Heartbeat-Fragment-Routen weiter unten
+     * (/partials/listing, /admin/partials/listing). So bleibt
+     * views/partials/file-rows.ejs (und die anderen Zeilen-Partials) die
+     * einzige Stelle, die dieses Markup erzeugt; das erste Server-Side-
+     * Render und das per Poll nachgelieferte Fragment sehen garantiert
+     * gleich aus.
+     */
+    function renderPartial(view, locals) {
+        return new Promise((resolve, reject) => {
+            app.render(view, locals, (err, html) => {
+                if (err) reject(err); else resolve(html);
+            });
+        });
+    }
+
+    /*
      * Gemeinsame Render-Daten fuer admin.ejs — die Seite wird von vier Routen
      * gerendert (GET /admin-upload, GET /admin-search, sowie die
      * Fehler-Pfade von POST /admin-password und /admin-username), alle mit
      * denselben Grunddaten plus je einem eigenen Fehlerfeld/Suchbegriff.
      */
     async function adminPageData({ query = '', passwordError = null, usernameError = null } = {}) {
-        const [files, allTags, passkeys, currentUsername, totpEnabled, auditEntries] = await Promise.all([
-            listFiles(query),
-            listAllTags(),
-            webauthnStore.listCredentials(),
-            usernameStore.read().then(name => name ?? ADMIN_USERNAME),
-            totpStore.isEnabled(),
-            auditLog.read({ limit: 8 }),
-        ]);
+        const [files, allTags, passkeys, currentUsername, totpEnabled, auditEntries, apiTokens] =
+            await Promise.all([
+                listFiles(query),
+                listAllTags(),
+                webauthnStore.listCredentials(),
+                usernameStore.read().then(name => name ?? ADMIN_USERNAME),
+                totpStore.isEnabled(),
+                auditLog.read({ limit: 8 }),
+                apiTokenStore.listTokens(),
+            ]);
         return {
             files, allTags, maxFileSizeMb: MAX_FILE_SIZE_MB, passkeys, currentUsername,
-            totpEnabled, auditEntries, passwordError, usernameError,
+            totpEnabled, auditEntries, apiTokens, passwordError, usernameError,
         };
     }
 
@@ -540,6 +745,57 @@ function createApp(options = {}) {
             res.type('text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename="SHA256SUMS"');
             res.send(lines.length > 0 ? `${lines.join('\n')}\n` : '');
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /*
+     * JSON-Gegenstueck zur Startseite/zu /checksums — fuer eigene Skripte,
+     * CI-Checks oder ein Monitoring, das die Dateiliste nicht aus HTML
+     * herausparsen soll. Liefert dieselben Felder wie describe() (siehe
+     * oben), also auch Dateien ohne aktuelle Checksumme (sha256: null,
+     * hashStatus verrät warum). Genau wie /checksums oeffentlich: die Werte
+     * stehen ohnehin schon auf der oeffentlichen Startseite.
+     */
+    app.get('/api/files.json', async (req, res, next) => {
+        const query = String(req.query.q || '').slice(0, 200);
+        try {
+            res.json(await listFiles(query));
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /* Alle vorkommenden Tags, unabhaengig von einer Suche — JSON-Gegenstueck
+       zur Tag-Filterleiste (siehe listAllTags() oben). */
+    app.get('/api/tags.json', async (req, res, next) => {
+        try {
+            res.json(await listAllTags());
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /*
+     * Heartbeat-Fragment fuer die oeffentliche Startseite/das Suchergebnis
+     * (public/js/heartbeat.js, alle 20s abgefragt, siehe pollLimiter oben).
+     * Liefert die Dateitabelle und die Tag-Filterleiste bereits fertig
+     * gerendert (dasselbe Partial wie beim ersten Server-Side-Render, siehe
+     * renderPartial()) statt roher JSON-Daten — so muss kein zweites Mal in
+     * JavaScript nachgebaut werden, wie eine Datei-Zeile aussieht. Immer die
+     * komplette, ungefilterte Liste: eine aktive Freitextsuche filtert schon
+     * client-seitig (filetable.js), der Heartbeat aktualisiert nur die
+     * zugrundeliegenden Daten.
+     */
+    app.get('/partials/listing', pollLimiter, async (req, res, next) => {
+        try {
+            const [files, allTags] = await Promise.all([listFiles(), listAllTags()]);
+            const [filesHtml, tagsHtml] = await Promise.all([
+                renderPartial('partials/file-rows', { files, admin: false }),
+                renderPartial('partials/tag-filter', { allTags, searchQuery: '', searchBase: '/search' }),
+            ]);
+            res.json({ filesHtml, tagsHtml, visibleCount: files.length });
         } catch (err) {
             next(err);
         }
@@ -623,7 +879,11 @@ function createApp(options = {}) {
     });
 
     app.get('/login', (req, res) => {
-        res.render('login', { error: null });
+        // ?idle=1 kommt ausschliesslich vom eigenen checkAuth-Redirect nach
+        // Session-Idle-Timeout (siehe oben) — kein Nutzereingriff moeglich,
+        // der Text ist fest verdrahtet.
+        const error = req.query.idle === '1' ? 'Wegen Inaktivität abgemeldet. Bitte erneut anmelden.' : null;
+        res.render('login', { error });
     });
 
     app.post('/login', loginLimiterGlobal, loginLimiterPerIp, async (req, res) => {
@@ -651,6 +911,7 @@ function createApp(options = {}) {
                     return res.redirect('/login/totp');
                 }
                 req.session.loggedIn = true;
+                req.session.lastActivity = Date.now();
                 auditLog.log('login_success', { ip: req.ip, username: submittedUsername });
                 res.redirect('/admin-upload');
             });
@@ -698,6 +959,7 @@ function createApp(options = {}) {
 
         delete req.session.pendingTotp;
         req.session.loggedIn = true;
+        req.session.lastActivity = Date.now();
         auditLog.log('totp_login_success', { ip: req.ip });
         res.redirect('/admin-upload');
     });
@@ -927,6 +1189,7 @@ function createApp(options = {}) {
                     return res.status(500).json({ error: 'Serverfehler.' });
                 }
                 req.session.loggedIn = true;
+                req.session.lastActivity = Date.now();
                 auditLog.log('passkey_login_success', { ip: req.ip, credentialId: stored.credentialId });
                 res.json({ ok: true, redirect: '/admin-upload' });
             });
@@ -984,12 +1247,95 @@ function createApp(options = {}) {
         }
     });
 
+    /* ---------------------------------------------------- API-Tokens --
+       Erstellung/Verwaltung nur fuer bereits angemeldete Admins (checkAuth)
+       — kein API-Weg zur Selbstausstellung, dasselbe Bootstrap-Prinzip wie
+       bei Passkeys oben. Die Tokens selbst werden unter /api/v1 verwendet
+       (siehe checkApiToken). */
+
+    app.get('/admin/api-tokens', checkAuth, async (req, res, next) => {
+        try {
+            res.json(await apiTokenStore.listTokens());
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.post('/admin/api-tokens', checkAuth, async (req, res, next) => {
+        const label = safeApiTokenLabel(req.body.label) ?? null;
+        const scopes = Array.isArray(req.body.scopes) ? req.body.scopes : ['read'];
+        try {
+            const created = await apiTokenStore.createToken({ label, scopes });
+            if (!created) {
+                return res.status(400).json({ error: 'Ungültige Scopes.' });
+            }
+            auditLog.log('api_token_created', {
+                ip: req.ip, tokenId: created.id, label: created.label, scopes: created.scopes,
+            });
+            // Klartext-Token nur hier, genau einmal — danach nicht mehr
+            // rekonstruierbar (siehe lib/api-token-store.js).
+            res.status(201).json(created);
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.delete('/admin/api-tokens/:id', checkAuth, async (req, res) => {
+        const id = safeApiTokenId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Token-ID.' });
+        const removed = await apiTokenStore.revokeToken(id);
+        if (removed) auditLog.log('api_token_revoked', { ip: req.ip, tokenId: id });
+        res.status(removed ? 204 : 404).end();
+    });
+
     app.get('/admin-audit-log', checkAuth, async (req, res, next) => {
         try {
             res.render('audit-log', { entries: await auditLog.read({ limit: 500 }) });
         } catch (err) {
             next(err);
         }
+    });
+
+    /*
+     * Admin-Gegenstueck zu /partials/listing oben: Dateitabelle, Tag-
+     * Filterleiste, Passkeys und API-Tokens fertig gerendert, plus die
+     * juengsten Audit-Log-Eintraege als JSON (deren Markup ist einfach genug,
+     * um es ohne Duplikationsrisiko direkt in heartbeat.js nachzubauen —
+     * anders als eine Datei-Zeile). Ein einziger Request pro Poll-Intervall
+     * fuer die ganze admin.ejs/audit-log.ejs-Seite statt mehrerer.
+     */
+    app.get('/admin/partials/listing', checkAuth, pollLimiter, async (req, res, next) => {
+        try {
+            const [files, allTags, passkeys, apiTokens, auditEntries] = await Promise.all([
+                listFiles(),
+                listAllTags(),
+                webauthnStore.listCredentials(),
+                apiTokenStore.listTokens(),
+                auditLog.read({ limit: 20 }),
+            ]);
+            const [filesHtml, tagsHtml, passkeysHtml, apiTokensHtml] = await Promise.all([
+                renderPartial('partials/file-rows', { files, admin: true }),
+                renderPartial('partials/tag-filter-panel', { allTags, searchQuery: '', searchBase: '/admin-search' }),
+                renderPartial('partials/passkey-rows', { passkeys }),
+                renderPartial('partials/token-rows', { apiTokens }),
+            ]);
+            res.json({
+                filesHtml, tagsHtml, passkeysHtml, apiTokensHtml, auditEntries, visibleCount: files.length,
+            });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /*
+     * Keepalive fuer public/js/idle-timer.js: wird ausschliesslich durch
+     * echte Nutzeraktivitaet (Klick/Taste/Maus, dort throttled) ausgeloest,
+     * nie automatisch wie das Heartbeat-Polling oben — checkAuth erneuert
+     * lastActivity also tatsaechlich. Keine eigene Nutzlast, nur der
+     * Seiteneffekt in checkAuth zaehlt.
+     */
+    app.get('/admin/ping', checkAuth, pollLimiter, (req, res) => {
+        res.status(204).end();
     });
 
     /* ------------------------------------------- Fortsetzbarer Upload -- */
@@ -1007,11 +1353,96 @@ function createApp(options = {}) {
         res.status(500).json({ error: 'Upload fehlgeschlagen.' });
     }
 
+    /*
+     * Dedup-Pruefung, gemeinsam fuer den fortsetzbaren und den Multipart-
+     * Fallback-Upload: gibt es bereits eine Datei mit exakt dieser
+     * Pruefsumme (unter einem anderen Namen als dem Ziel und nicht der per
+     * `replaces` explizit zu ersetzenden Datei), ist es ein echtes Duplikat.
+     * sha256 ist null, wenn keine mitgelaufene Pruefsumme vorliegt (z. B.
+     * Upload-Sitzung ueberlebte einen Serverneustart) — dann faellt die
+     * Pruefung fuer diesen einen Upload einfach aus, der Hash-Queue holt die
+     * echte Checksumme wie gewohnt im Hintergrund nach.
+     */
+    async function findDuplicate(sha256, { targetName, replaces }) {
+        if (!sha256) return null;
+        const matches = await metadata.findByChecksum(sha256);
+        return matches.find(name => name !== targetName && name !== replaces) ?? null;
+    }
+
+    /*
+     * Loescht die per `replaces` explizit vom Admin ausgewaehlte alte Datei
+     * — immer erst NACH dem erfolgreichen Verschieben der neuen, damit ein
+     * fehlgeschlagener Upload nie grundlos die alte Version mitreisst.
+     * Best-effort: ist die alte Datei inzwischen schon weg, passiert nichts.
+     */
+    async function replaceOldVersion(replaces, { ip, filename }) {
+        if (!replaces) return false;
+        const oldPath = path.join(UPLOADS_DIR, replaces);
+        if (path.dirname(oldPath) !== UPLOADS_DIR) return false;
+        await fsp.rm(oldPath, { force: true });
+        await metadata.remove(replaces);
+        auditLog.log('upload_replaced', { ip, filename, replaces });
+        return true;
+    }
+
+    /*
+     * Loescht jede der uebergebenen Dateien (samt Metadaten-Zeile) und gibt
+     * zurueck, welche davon tatsaechlich existierten — gemeinsame Basis fuer
+     * /delete, /delete-bulk und deren /api/v1-Gegenstuecke, damit die
+     * Pfadabsicherung (dirname-Check) nur an einer Stelle steht.
+     */
+    async function deleteFiles(names) {
+        const deleted = [];
+        for (const name of names) {
+            const filePath = path.join(UPLOADS_DIR, name);
+            if (path.dirname(filePath) !== UPLOADS_DIR) continue;
+            // Kein { force: true }: das wuerde eine fehlende Datei stillschweigend
+            // als Erfolg behandeln, obwohl deleted[] laut Dokumentation nur
+            // tatsaechlich existierende Dateien enthalten soll (Grundlage fuer
+            // den 404-Zweig von DELETE /api/v1/files/:name).
+            try {
+                await fsp.rm(filePath);
+            } catch (err) {
+                if (err.code === 'ENOENT') continue;
+                throw err;
+            }
+            await metadata.remove(name);
+            deleted.push(name);
+        }
+        return deleted;
+    }
+
+    /*
+     * Entfernt einen einzelnen Tag und pflegt removedAutoTags nach, falls es
+     * ein Auto-Tag war (siehe lib/auto-tags.js) — gemeinsame Basis fuer
+     * DELETE /files/:name/tags/:tag und dessen /api/v1-Gegenstueck.
+     */
+    async function removeTag(filename, tag) {
+        const meta = await metadata.read(filename);
+        const existing = meta?.tags ?? [];
+        const tags = existing.filter(t => t.toLowerCase() !== tag.toLowerCase());
+        if (tags.length === existing.length) return { tags, changed: false };
+
+        const autoTags = meta?.autoTags ?? [];
+        const wasAutoTag = autoTags.some(t => t.toLowerCase() === tag.toLowerCase());
+        const patch = { tags };
+        if (wasAutoTag) {
+            patch.autoTags = autoTags.filter(t => t.toLowerCase() !== tag.toLowerCase());
+            const removedAuto = meta?.removedAutoTags ?? [];
+            if (!removedAuto.some(t => t.toLowerCase() === tag.toLowerCase())) {
+                patch.removedAutoTags = [...removedAuto, tag];
+            }
+        }
+        await metadata.update(filename, patch);
+        return { tags, changed: true };
+    }
+
     app.post('/upload/init', checkAuth, async (req, res) => {
         try {
             const state = await uploadSessions.create({
                 name: req.body.name,
                 size: Number(req.body.size),
+                replaces: req.body.replaces,
             });
             res.status(201).json(state);
         } catch (err) {
@@ -1054,11 +1485,24 @@ function createApp(options = {}) {
         const id = safeUploadId(req.params.id);
         if (!id) return res.status(400).json({ error: 'Ungültige Upload-ID.' });
         try {
-            const { filename } = await uploadSessions.finish(id);
+            const session = await uploadSessions.get(id);
+            const duplicateOf = await findDuplicate(uploadSessions.pendingHash(id), {
+                targetName: session.name, replaces: session.replaces,
+            });
+            if (duplicateOf) {
+                await uploadSessions.abort(id);
+                return res.status(409).json({
+                    error: `Identischer Inhalt liegt bereits als „${duplicateOf}“ vor.`,
+                    duplicateOf,
+                });
+            }
+
+            const { filename, replaces } = await uploadSessions.finish(id);
             // Checksumme und Volume-Infos laufen im Hintergrund nach
             hashQueue.enqueue(filename);
             auditLog.log('upload', { ip: req.ip, filename });
-            res.status(201).json({ filename });
+            const replaced = await replaceOldVersion(replaces, { ip: req.ip, filename });
+            res.status(201).json({ filename, replaced: replaced ? replaces : null });
         } catch (err) {
             sendUploadError(res, err, log);
         }
@@ -1100,7 +1544,22 @@ function createApp(options = {}) {
                 return fail(400, 'Ungültiger Name — nur .iso-Dateien sind erlaubt.');
             }
 
+            const requestedReplaces = safeIsoName(req.body.replaces);
+            const replaces = requestedReplaces && requestedReplaces !== filename
+                ? requestedReplaces : null;
+
             try {
+                // Kein mitlaufender Hasher wie beim Chunk-Upload (der
+                // Multipart-Fallback ist der No-JS-Pfad, keine Streaming-
+                // Chunks) — die Datei liegt schon komplett im temp-Verzeichnis,
+                // also einmal durchhashen, bevor sie nach uploads/ zieht.
+                const sha256 = await sha256OfFile(file.path);
+                const duplicateOf = await findDuplicate(sha256, { targetName: filename, replaces });
+                if (duplicateOf) {
+                    await fsp.rm(file.path, { force: true });
+                    return fail(409, `Identischer Inhalt liegt bereits als „${duplicateOf}“ vor.`);
+                }
+
                 await fsp.mkdir(UPLOADS_DIR, { recursive: true });
                 await moveFile(file.path, path.join(UPLOADS_DIR, filename));
             } catch (moveErr) {
@@ -1111,8 +1570,9 @@ function createApp(options = {}) {
 
             hashQueue.enqueue(filename);
             auditLog.log('upload', { ip: req.ip, filename });
+            const replaced = await replaceOldVersion(replaces, { ip: req.ip, filename });
 
-            if (wantsJson) return res.status(201).json({ filename });
+            if (wantsJson) return res.status(201).json({ filename, replaced: replaced ? replaces : null });
             res.redirect('/admin-upload');
         });
     });
@@ -1122,16 +1582,8 @@ function createApp(options = {}) {
         if (!filename) {
             return res.status(400).send('Ungültiger Dateiname.');
         }
-        const filePath = path.join(UPLOADS_DIR, filename);
-        // Sicherstellen, dass der aufgeloeste Pfad wirklich in uploads/ liegt
-        if (path.dirname(filePath) !== UPLOADS_DIR) {
-            return res.status(400).send('Ungültiger Dateiname.');
-        }
         try {
-            await fsp.rm(filePath, { force: true }); // force: kein Fehler, wenn weg
-            // Sidecar mit entfernen, sonst zeigt ein spaeteres Image mit
-            // gleichem Namen die Checksumme des alten.
-            await metadata.remove(filename);
+            await deleteFiles([filename]);
         } catch (err) {
             return next(err);
         }
@@ -1207,15 +1659,9 @@ function createApp(options = {}) {
             return res.status(400).json({ error: `Höchstens ${MAX_BULK_FILES} Dateien auf einmal.` });
         }
 
-        const deleted = [];
+        let deleted;
         try {
-            for (const name of names) {
-                const filePath = path.join(UPLOADS_DIR, name);
-                if (path.dirname(filePath) !== UPLOADS_DIR) continue;
-                await fsp.rm(filePath, { force: true });
-                await metadata.remove(name);
-                deleted.push(name);
-            }
+            deleted = await deleteFiles(names);
         } catch (err) {
             return next(err);
         }
@@ -1243,24 +1689,8 @@ function createApp(options = {}) {
         }
 
         try {
-            const meta = await metadata.read(filename);
-            const existing = meta?.tags ?? [];
-            const tags = existing.filter(t => t.toLowerCase() !== tag.toLowerCase());
-            if (tags.length !== existing.length) {
-                const autoTags = meta?.autoTags ?? [];
-                const wasAutoTag = autoTags.some(t => t.toLowerCase() === tag.toLowerCase());
-                const patch = { tags };
-                if (wasAutoTag) {
-                    // Nicht wieder auferstehen lassen: naechster Rescan (Datei
-                    // unveraendert -> gleiche Auto-Tags) soll diesen Tag nicht
-                    // erneut anhaengen. lib/auto-tags.js liest removedAutoTags.
-                    patch.autoTags = autoTags.filter(t => t.toLowerCase() !== tag.toLowerCase());
-                    const removedAuto = meta?.removedAutoTags ?? [];
-                    if (!removedAuto.some(t => t.toLowerCase() === tag.toLowerCase())) {
-                        patch.removedAutoTags = [...removedAuto, tag];
-                    }
-                }
-                await metadata.update(filename, patch);
+            const { tags, changed } = await removeTag(filename, tag);
+            if (changed) {
                 auditLog.log('tag_removed', { ip: req.ip, filename, tag });
             }
             res.json({ tags });
@@ -1269,10 +1699,248 @@ function createApp(options = {}) {
         }
     });
 
+    /* ================================================================
+       /api/v1 — versionierte JSON-API fuer Skripte/CI.
+
+       Lese-Endpunkte bleiben oeffentlich, aus demselben Grund wie
+       /api/files.json oben: die Daten stehen ohnehin auf der oeffentlichen
+       Startseite. Schreib-Endpunkte und der Audit-Log-Endpunkt verlangen ein
+       Bearer-Token (siehe checkApiToken oben). Antworten folgen einem
+       einheitlichen Envelope — { data, meta? } bei Erfolg, { error, code }
+       bei Fehlern — anders als die alten /api/*.json-Routen, die aus
+       Kompatibilitaetsgruenden unveraendert bleiben.
+       ================================================================ */
+
+    app.use('/api/v1', apiLimiter);
+
+    function sendApiUploadError(res, err) {
+        if (err instanceof UploadError) {
+            const body = { error: err.message, code: 'upload_error' };
+            if (err.extra.offset !== undefined) body.offset = err.extra.offset;
+            if (err.extra.size !== undefined) body.size = err.extra.size;
+            return res.status(err.status).json(body);
+        }
+        log.error('API-Upload-Fehler:', err);
+        res.status(500).json({ error: 'Upload fehlgeschlagen.', code: 'server_error' });
+    }
+
+    app.get('/api/v1/files', async (req, res, next) => {
+        try {
+            const query = String(req.query.q || '').slice(0, 200);
+            const tag = String(req.query.tag || '').toLowerCase();
+            const sorter = API_SORTERS[req.query.sort] ?? API_SORTERS.name;
+
+            let files = await listFiles(query);
+            if (tag) files = files.filter(file => file.tags.some(t => t.toLowerCase() === tag));
+            files = [...files].sort(sorter);
+
+            res.json(paginate(files, parsePageParams(req.query)));
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/api/v1/files/:name', async (req, res, next) => {
+        const filename = safeIsoName(req.params.name);
+        if (!filename) {
+            return res.status(400).json({ error: 'Ungültiger Dateiname.', code: 'invalid_name' });
+        }
+        try {
+            await fsp.access(path.join(UPLOADS_DIR, filename));
+        } catch {
+            return res.status(404).json({ error: 'Datei nicht gefunden.', code: 'not_found' });
+        }
+        try {
+            res.json({ data: await describe(filename) });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/api/v1/tags', async (req, res, next) => {
+        try {
+            res.json({ data: await listAllTags() });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/api/v1/checksums', async (req, res, next) => {
+        try {
+            const files = await listFiles();
+            res.json({
+                data: files
+                    .filter(file => file.sha256)
+                    .map(file => ({ name: file.name, sha256: file.sha256 })),
+            });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/api/v1/audit-log', checkApiToken('read'), async (req, res, next) => {
+        try {
+            const entries = await auditLog.read({ limit: Infinity });
+            res.json(paginate(entries, parsePageParams(req.query)));
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /* -------------------------------------------------- Uploads (write) --
+       Identisches Protokoll wie /upload/init + Freunde (siehe
+       lib/chunked-upload.js) — nur die Auth wechselt von checkAuth auf ein
+       Bearer-Token mit write-Scope, und die Antworten kommen im API-Envelope. */
+
+    app.post('/api/v1/uploads', checkApiToken('write'), async (req, res) => {
+        try {
+            const state = await uploadSessions.create({
+                name: req.body.name,
+                size: Number(req.body.size),
+                replaces: req.body.replaces,
+            });
+            res.status(201).json({ data: state });
+        } catch (err) {
+            sendApiUploadError(res, err);
+        }
+    });
+
+    app.get('/api/v1/uploads/:id', checkApiToken('write'), async (req, res) => {
+        const id = safeUploadId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Upload-ID.', code: 'invalid_id' });
+        try {
+            res.json({ data: await uploadSessions.get(id) });
+        } catch (err) {
+            sendApiUploadError(res, err);
+        }
+    });
+
+    app.patch('/api/v1/uploads/:id', checkApiToken('write'), async (req, res) => {
+        const id = safeUploadId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Upload-ID.', code: 'invalid_id' });
+
+        const header = req.get('upload-offset');
+        const claimed = /^\d+$/.test(String(header ?? '')) ? Number(header) : NaN;
+
+        try {
+            const state = await uploadSessions.append(id, claimed, req);
+            res.json({ data: { offset: state.offset, size: state.size, complete: state.complete } });
+        } catch (err) {
+            sendApiUploadError(res, err);
+        }
+    });
+
+    app.post('/api/v1/uploads/:id/finish', checkApiToken('write'), async (req, res) => {
+        const id = safeUploadId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Upload-ID.', code: 'invalid_id' });
+        try {
+            const session = await uploadSessions.get(id);
+            const duplicateOf = await findDuplicate(uploadSessions.pendingHash(id), {
+                targetName: session.name, replaces: session.replaces,
+            });
+            if (duplicateOf) {
+                await uploadSessions.abort(id);
+                return res.status(409).json({
+                    error: `Identischer Inhalt liegt bereits als „${duplicateOf}“ vor.`,
+                    code: 'duplicate',
+                    duplicateOf,
+                });
+            }
+
+            const { filename, replaces } = await uploadSessions.finish(id);
+            hashQueue.enqueue(filename);
+            auditLog.log('upload', { ip: req.ip, filename, via: 'api', tokenId: req.apiToken.id });
+            const replaced = await replaceOldVersion(replaces, { ip: req.ip, filename });
+            res.status(201).json({ data: { filename, replaced: replaced ? replaces : null } });
+        } catch (err) {
+            sendApiUploadError(res, err);
+        }
+    });
+
+    app.delete('/api/v1/uploads/:id', checkApiToken('write'), async (req, res) => {
+        const id = safeUploadId(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Ungültige Upload-ID.', code: 'invalid_id' });
+        await uploadSessions.abort(id);
+        res.status(204).end();
+    });
+
+    /* --------------------------------------------------- Delete/Tags (write) -- */
+
+    app.delete('/api/v1/files/:name', checkApiToken('write'), async (req, res, next) => {
+        const filename = safeIsoName(req.params.name);
+        if (!filename) {
+            return res.status(400).json({ error: 'Ungültiger Dateiname.', code: 'invalid_name' });
+        }
+        let deleted;
+        try {
+            deleted = await deleteFiles([filename]);
+        } catch (err) {
+            return next(err);
+        }
+        if (deleted.length === 0) {
+            return res.status(404).json({ error: 'Datei nicht gefunden.', code: 'not_found' });
+        }
+        auditLog.log('delete', { ip: req.ip, filename, via: 'api', tokenId: req.apiToken.id });
+        res.status(204).end();
+    });
+
+    app.post('/api/v1/files/bulk-delete', checkApiToken('write'), async (req, res, next) => {
+        const requested = Array.isArray(req.body?.names) ? req.body.names : [];
+        const names = [...new Set(requested.map(safeIsoName).filter(Boolean))];
+        if (names.length === 0) {
+            return res.status(400).json({ error: 'Keine gültigen Dateien ausgewählt.', code: 'invalid_name' });
+        }
+        if (names.length > MAX_BULK_FILES) {
+            return res.status(400).json({
+                error: `Höchstens ${MAX_BULK_FILES} Dateien auf einmal.`, code: 'too_many_files',
+            });
+        }
+
+        let deleted;
+        try {
+            deleted = await deleteFiles(names);
+        } catch (err) {
+            return next(err);
+        }
+
+        auditLog.log('bulk_delete', {
+            ip: req.ip, count: deleted.length, names: deleted, via: 'api', tokenId: req.apiToken.id,
+        });
+        res.json({ data: { deleted } });
+    });
+
+    app.delete('/api/v1/files/:name/tags/:tag', checkApiToken('write'), async (req, res, next) => {
+        const filename = safeIsoName(req.params.name);
+        const tag = safeTag(req.params.tag);
+        if (!filename || !tag) {
+            return res.status(400).json({ error: 'Ungültige Anfrage.', code: 'invalid_request' });
+        }
+        try {
+            const { tags, changed } = await removeTag(filename, tag);
+            if (changed) {
+                auditLog.log('tag_removed', { ip: req.ip, filename, tag, via: 'api', tokenId: req.apiToken.id });
+            }
+            res.json({ data: { tags } });
+        } catch (err) {
+            next(err);
+        }
+    });
+
     app.get('/logout', (req, res) => {
+        // ?idle=1 kommt von public/js/idle-timer.js, wenn der clientseitige
+        // Countdown abgelaufen ist (oder der Keepalive-Ping mit 401
+        // antwortet) — derselbe Fall wie der serverseitige Idle-Timeout in
+        // checkAuth oben, nur clientseitig erkannt, bevor ein weiterer
+        // admin-Request den Server selbst dazu bringen wuerde. Landet daher
+        // ebenfalls auf /login?idle=1 statt auf '/', sonst faehrt der Nutzer
+        // ohne jede Meldung auf der oeffentlichen Startseite auf.
+        const idle = req.query.idle === '1';
+        if (idle) {
+            auditLog.log('session_idle_timeout', { ip: req.ip });
+        }
         req.session.destroy(() => {
             res.clearCookie('iso.sid');
-            res.redirect('/');
+            res.redirect(idle ? '/login?idle=1' : '/');
         });
     });
 
@@ -1312,6 +1980,9 @@ function createApp(options = {}) {
        Nie Stacktraces nach aussen. */
 
     app.use((req, res) => {
+        if (req.path.startsWith('/api/v1/')) {
+            return res.status(404).json({ error: 'Nicht gefunden.', code: 'not_found' });
+        }
         res.status(404).send('Nicht gefunden');
     });
 
@@ -1319,6 +1990,9 @@ function createApp(options = {}) {
     app.use((err, req, res, next) => {
         log.error('Unhandled error:', err);
         if (res.headersSent) return next(err);
+        if (req.path.startsWith('/api/v1/')) {
+            return res.status(500).json({ error: 'Serverfehler.', code: 'server_error' });
+        }
         res.status(500).send('Serverfehler');
     });
 
@@ -1338,24 +2012,39 @@ function createApp(options = {}) {
         await fsp.mkdir(UPLOADS_DIR, { recursive: true });
         await fsp.mkdir(TMP_DIR, { recursive: true });
 
-        // Kein ADMIN_PASSWORD gesetzt: einmalig ein zufaelliges Passwort
-        // erzeugen und SOFORT persistieren, statt es nur im Speicher zu
-        // halten. Existiert schon ein gespeichertes (aus einem frueheren
-        // Start oder ueber /admin-password geaendert), bleibt das bestehen
-        // — sonst waere das Passwort bei jedem Neustart ein anderes.
-        if (!ADMIN_PASSWORD) {
-            const existing = await passwordStore.read();
-            if (!existing) {
+        // Einmaliger Best-Effort-Import aus dem alten JSON-Dateien-Stand,
+        // falls hier noch welcher liegt (siehe lib/migrate-legacy.js). Greift
+        // nur auf leere Tabellen, macht also bei jedem weiteren Start nichts.
+        await migrateLegacyData({
+            db, uploadsDir: UPLOADS_DIR, dataDir: DATA_DIR, tmpDir: TMP_DIR, log,
+        });
+
+        // Bootstrap: existiert noch kein persistiertes Passwort, wird der
+        // wirksame Wert sofort persistiert — ADMIN_PASSWORD, falls gesetzt,
+        // sonst ein frisch generiertes. Ab hier gewinnt in jedem Fall die DB
+        // (siehe Kommentar oben bei den Secrets); eine spaeter gesetzte oder
+        // geaenderte ADMIN_PASSWORD-Env-Var hat danach keine Wirkung mehr.
+        if (!(await passwordStore.read())) {
+            if (ADMIN_PASSWORD) {
+                await passwordStore.setPassword(ADMIN_PASSWORD);
+            } else {
                 const generated = crypto.randomBytes(18).toString('base64url');
                 await passwordStore.setPassword(generated);
                 log.warn(
                     '\n⚠️  Kein ADMIN_PASSWORD gesetzt. Einmalig generiertes Passwort ' +
-                    `(dauerhaft gespeichert in ${passwordStore.file}):\n` +
+                    `(dauerhaft gespeichert in ${path.join(DATA_DIR, 'iso-share.db')}):\n` +
                     `    ${generated}\n` +
                     '    Wird bei einem Neustart NICHT erneut angezeigt. Ändern jederzeit\n' +
-                    '    unter /admin-upload, oder ADMIN_PASSWORD als Umgebungsvariable setzen.\n'
+                    '    unter /admin-upload.\n'
                 );
             }
+        }
+
+        // Derselbe Bootstrap fuer den Benutzernamen: der wirksame Wert
+        // (ADMIN_USERNAME/Default 'admin') wird beim ersten Start
+        // persistiert, danach gewinnt die DB — genau wie beim Passwort.
+        if (!(await usernameStore.read())) {
+            await usernameStore.write(ADMIN_USERNAME);
         }
 
         await uploadSessions.cleanupStale().catch(() => {});
@@ -1367,16 +2056,15 @@ function createApp(options = {}) {
         }
     }
 
-    /* Offene Zaehler und Sitzungen wegschreiben, Timer abbauen. */
+    /*
+     * Timer abbauen, Datenbank schliessen. Alle Schreibvorgaenge in den
+     * Stores oben sind synchrone SQLite-Operationen — es gibt nichts mehr im
+     * Speicher zu puffern oder "settled" abzuwarten.
+     */
     async function stop() {
         timers.forEach(clearInterval);
         sessionStore.close();
-        webauthnStore.close();
-        totpStore.close();
-        await Promise.all([
-            metadata.flush(), sessionStore.settled(), webauthnStore.flush(),
-            totpStore.flush(), auditLog.flush(),
-        ]);
+        db.close();
     }
 
     return {
@@ -1385,8 +2073,9 @@ function createApp(options = {}) {
         stop,
         // fuer Tests und /healthz
         services: {
-            metadata, hashQueue, uploadSessions, sessionStore,
+            db, metadata, hashQueue, uploadSessions, sessionStore,
             webauthnStore, passwordStore, usernameStore, totpStore, auditLog, listFiles,
+            apiTokenStore,
         },
     };
 }

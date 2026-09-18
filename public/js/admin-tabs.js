@@ -37,6 +37,10 @@
       event.preventDefault();
       show(link.dataset.tabLink);
       history.replaceState(null, "", link.getAttribute("href"));
+      // Ein Tab-Wechsel ist aus Nutzersicht ein Seitenwechsel (Dateien /
+      // Sicherheit / Konto) — siehe idle-timer.js dazu, warum nur das (und
+      // kein bloszes Mausbewegen) den Idle-Countdown zuruecksetzt.
+      if (window.isoShareIdleTimer) window.isoShareIdleTimer.markActive();
     });
   });
 

@@ -1,5 +1,8 @@
 # Use official Node.js runtime as base image
-FROM node:22-alpine
+# >=22.5 fuer node:sqlite (siehe lib/db.js) — v24 ausgeliefert, damit die
+# eingebaute SQLite-API ohne --experimental-sqlite-Flag und ohne
+# ExperimentalWarning laeuft (auf v22/23 noch flag- bzw. warnungspflichtig).
+FROM node:24-alpine
 
 # Set working directory in container
 WORKDIR /app
@@ -13,9 +16,10 @@ RUN npm ci --omit=dev
 # Copy application code
 COPY . .
 
-# Create upload, temp and session directories and set permissions
-# data/sessions haelt die Sitzungen ueber einen Neustart hinweg
-RUN mkdir -p uploads tmp-uploads data/sessions && \
+# Create upload, temp and data directories and set permissions
+# data/ haelt die SQLite-Datenbank (Sitzungen, Metadaten, Zugangsdaten, ...)
+# ueber einen Neustart hinweg, siehe lib/db.js
+RUN mkdir -p uploads tmp-uploads data && \
     chown -R node:node /app
 
 # Switch to non-root user for security

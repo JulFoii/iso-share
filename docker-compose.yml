@@ -8,8 +8,11 @@ services:
       - "3000:3000"
     volumes:
       - ./uploads:/app/uploads
-      # Sitzungen liegen unter data/sessions; vorher zeigte dieses Volume auf
-      # /tmp/sessions, wo nie etwas geschrieben wurde (MemoryStore).
+      # Die SQLite-Datenbank (data/iso-share.db) haelt Sitzungen, Datei-
+      # Metadaten, Zugangsdaten, Passkeys, TOTP und das Audit-Log ueber einen
+      # Neustart hinweg. Der Volume-Name ist historisch (vor dem Umstieg auf
+      # SQLite lagen hier nur die Sitzungsdateien) und bewusst nicht
+      # umbenannt, damit ein bestehendes Volume weiter eingehaengt wird.
       - iso-share-sessions:/app/data
     environment:
       - NODE_ENV=production

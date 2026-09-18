@@ -5,7 +5,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fsp = require('fs/promises');
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
@@ -14,12 +13,15 @@ const { promisify } = require('util');
 
 const { safeIsoName, safeUploadId } = require('../lib/safe-name');
 const { readIsoInfo } = require('../lib/iso9660');
+const { openDatabase } = require('../lib/db');
 const { createMetadataStore } = require('../lib/metadata');
 const { createHashQueue } = require('../lib/hash-queue');
 const { deriveAutoTags, applyAutoTags } = require('../lib/auto-tags');
 const { createUploadSessions } = require('../lib/chunked-upload');
-const { FileSessionStore } = require('../lib/session-store');
+const { SqliteSessionStore } = require('../lib/session-store');
 const { createWebauthnStore } = require('../lib/webauthn-store');
+const { createApiTokenStore } = require('../lib/api-token-store');
+const { createSessionSecretStore } = require('../lib/session-secret-store');
 const { createPasswordStore } = require('../lib/password-store');
 const { createUsernameStore } = require('../lib/username-store');
 const { safeCredentialId, safePasskeyLabel, safeUsername, safeTag } = require('../lib/safe-name');
@@ -33,6 +35,19 @@ const { makeIso } = require('./helpers/make-iso');
 
 async function tempDir() {
     return fsp.mkdtemp(path.join(os.tmpdir(), 'iso-share-unit-'));
+}
+
+/* Eine In-Memory-DB je Test — schnell, kein Aufraeumen noetig. Fuer Tests,
+   die einen Neustart simulieren (dieselbe Datenbank, neue Store-Instanz),
+   braucht es stattdessen eine echte Datei, siehe restartDb() unten. */
+function memoryDb() {
+    return openDatabase(':memory:');
+}
+
+async function restartDb() {
+    const dir = await tempDir();
+    const file = path.join(dir, 'test.db');
+    return { file, open: () => openDatabase(file), cleanup: () => fsp.rm(dir, { recursive: true, force: true }) };
 }
 
 /* ========================================================== safeIsoName */
@@ -161,11 +176,102 @@ test('readIsoInfo gibt null zurueck statt zu werfen', async () => {
     await fsp.rm(dir, { recursive: true, force: true });
 });
 
+test('readIsoInfo verwirft ein Erstelldatum mit unplausiblem Jahr oder Nicht-Ziffern', async () => {
+    const dir = await tempDir();
+
+    const zuFrueh = path.join(dir, 'zu-frueh.iso');
+    await fsp.writeFile(zuFrueh, makeIso({ createdAt: '1969123123595900', platformIds: [] }));
+    assert.equal((await readIsoInfo(zuFrueh)).createdAt, null);
+
+    const zuSpaet = path.join(dir, 'zu-spaet.iso');
+    await fsp.writeFile(zuSpaet, makeIso({ createdAt: '2201010100000000', platformIds: [] }));
+    assert.equal((await readIsoInfo(zuSpaet)).createdAt, null);
+
+    const keineZiffern = path.join(dir, 'keine-ziffern.iso');
+    await fsp.writeFile(keineZiffern, makeIso({ createdAt: 'nicht-numerisch!!', platformIds: [] }));
+    assert.equal((await readIsoInfo(keineZiffern)).createdAt, null);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo rechnet den Zeitzonen-Offset korrekt auf UTC um', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'tz.iso');
+    // +2:00 Uhr Lokalzeit (8 Viertelstunden) -> 2 Stunden von der Lokalzeit abziehen
+    await fsp.writeFile(file, makeIso({
+        createdAt: '2026060112000000', tzOffsetQuarters: 8, platformIds: [],
+    }));
+
+    const info = await readIsoInfo(file);
+    assert.equal(info.createdAt, '2026-06-01T10:00:00.000Z');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo laesst eine unbekannte Boot-Plattform-ID weg', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'unbekannt.iso');
+    // 0x03 ist in keiner realen Spezifikation vergeben und taucht nicht in PLATFORMS auf
+    await fsp.writeFile(file, makeIso({ platformIds: [0x03] }));
+
+    const info = await readIsoInfo(file);
+    assert.deepEqual(info.bootable, [], 'eine nicht gemappte Plattform-ID darf nicht als leerer/undefined-Eintrag durchrutschen');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo ignoriert einen Boot-Katalog-Sektor von 0', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'sektor-null.iso');
+    await fsp.writeFile(file, makeIso({ platformIds: [0x00], catalogSectorOverride: 0 }));
+
+    const info = await readIsoInfo(file);
+    assert.deepEqual(info.bootable, []);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo ignoriert einen Boot Record, der nicht El Torito ist', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'anderer-boot-record.iso');
+    await fsp.writeFile(file, makeIso({ platformIds: [0x00], bootSystemId: 'IRGENDWAS ANDERES' }));
+
+    const info = await readIsoInfo(file);
+    assert.deepEqual(info.bootable, []);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo berechnet volumeSize, gibt aber null bei blockSize 0', async () => {
+    const dir = await tempDir();
+
+    const normal = path.join(dir, 'normal.iso');
+    await fsp.writeFile(normal, makeIso({ platformIds: [], padSectors: 2 }));
+    const infoNormal = await readIsoInfo(normal);
+    assert.equal(infoNormal.volumeSize, (16 + 3 + 2) * 2048);
+
+    const nullBlockSize = path.join(dir, 'null-blocksize.iso');
+    await fsp.writeFile(nullBlockSize, makeIso({ platformIds: [], blockSize: 0 }));
+    assert.equal((await readIsoInfo(nullBlockSize)).volumeSize, null);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('readIsoInfo verwendet nur den ersten Primary Volume Descriptor', async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, 'doppelt.iso');
+    await fsp.writeFile(file, makeIso({ volumeId: 'ERSTER', platformIds: [], extraPvd: 'ZWEITER' }));
+
+    const info = await readIsoInfo(file);
+    assert.equal(info.volumeId, 'ERSTER');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
 /* ============================================================ metadata */
 
 test('Metadaten werden gemergt, nicht ersetzt', async () => {
-    const dir = await tempDir();
-    const store = createMetadataStore({ dir });
+    const store = createMetadataStore({ db: memoryDb() });
 
     await store.update('a.iso', { sha256: 'abc', size: 10, mtime: 1 });
     await store.update('a.iso', { iso: { volumeId: 'X' } });
@@ -173,32 +279,21 @@ test('Metadaten werden gemergt, nicht ersetzt', async () => {
     const meta = await store.read('a.iso');
     assert.equal(meta.sha256, 'abc');
     assert.deepEqual(meta.iso, { volumeId: 'X' });
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('Download-Zaehler ist sofort sichtbar und wird gebuendelt geschrieben', async () => {
-    const dir = await tempDir();
-    const store = createMetadataStore({ dir, flushDelayMs: 10_000 });
+test('Download-Zaehler ist sofort sichtbar (atomares UPDATE, kein Puffer mehr noetig)', async () => {
+    const store = createMetadataStore({ db: memoryDb() });
 
     store.recordDownload('a.iso');
     store.recordDownload('a.iso');
-    // Vor dem Flush schon im Ergebnis — sonst sieht die Ansicht veraltete Werte
-    assert.equal((await store.read('a.iso')).downloads, 2);
-
-    await store.flush();
     assert.equal((await store.read('a.iso')).downloads, 2);
 
     store.recordDownload('a.iso');
-    await store.flush();
     assert.equal((await store.read('a.iso')).downloads, 3);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('hasCurrentChecksum verwirft eine Checksumme nach Aenderung der Datei', async () => {
-    const dir = await tempDir();
-    const store = createMetadataStore({ dir });
+    const store = createMetadataStore({ db: memoryDb() });
     await store.update('a.iso', { sha256: 'abc', size: 10, mtime: 5 });
     const meta = await store.read('a.iso');
 
@@ -206,26 +301,28 @@ test('hasCurrentChecksum verwirft eine Checksumme nach Aenderung der Datei', asy
     assert.equal(store.hasCurrentChecksum(meta, { size: 11, mtimeMs: 5 }), false);
     assert.equal(store.hasCurrentChecksum(meta, { size: 10, mtimeMs: 6 }), false);
     assert.equal(store.hasCurrentChecksum(null, { size: 10, mtimeMs: 5 }), false);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('remove loescht das Sidecar', async () => {
-    const dir = await tempDir();
-    const store = createMetadataStore({ dir });
+test('remove loescht den Datensatz', async () => {
+    const store = createMetadataStore({ db: memoryDb() });
     await store.update('a.iso', { sha256: 'abc' });
     await store.remove('a.iso');
     assert.equal(await store.read('a.iso'), null);
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('kaputtes Sidecar gilt als "keine Metadaten"', async () => {
-    const dir = await tempDir();
-    const store = createMetadataStore({ dir });
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(path.join(dir, 'a.iso.json'), '{ das ist kein json');
-    assert.equal(await store.read('a.iso'), null);
-    await fsp.rm(dir, { recursive: true, force: true });
+test('unbekannter Name gilt als "keine Metadaten"', async () => {
+    const store = createMetadataStore({ db: memoryDb() });
+    assert.equal(await store.read('nie-gesehen.iso'), null);
+});
+
+test('findByChecksum findet alle Dateien mit derselben Pruefsumme (Dedup-Grundlage)', async () => {
+    const store = createMetadataStore({ db: memoryDb() });
+    await store.update('a.iso', { sha256: 'gleich' });
+    await store.update('b.iso', { sha256: 'gleich' });
+    await store.update('c.iso', { sha256: 'anders' });
+
+    assert.deepEqual((await store.findByChecksum('gleich')).sort(), ['a.iso', 'b.iso']);
+    assert.deepEqual(await store.findByChecksum('unbekannt'), []);
 });
 
 /* ========================================================== hash-queue */
@@ -238,7 +335,7 @@ test('scanAll hasht auch Dateien, die ausserhalb der App abgelegt wurden', async
     const content = makeIso({ volumeId: 'RSYNC_IMAGE' });
     await fsp.writeFile(path.join(uploadsDir, 'fremd.iso'), content);
 
-    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const metadata = createMetadataStore({ db: memoryDb() });
     const queue = createHashQueue({
         uploadsDir, metadata, log: { error() {} },
     });
@@ -263,7 +360,7 @@ test('nach einer Aenderung wird neu gehasht', async () => {
     await fsp.mkdir(uploadsDir, { recursive: true });
     const file = path.join(uploadsDir, 'x.iso');
 
-    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const metadata = createMetadataStore({ db: memoryDb() });
     const queue = createHashQueue({ uploadsDir, metadata, log: { error() {} } });
 
     await fsp.writeFile(file, makeIso({ volumeId: 'ERSTE' }));
@@ -293,6 +390,22 @@ test('deriveAutoTags liest Boot-Plattformen und Volume-Label', () => {
     );
     assert.deepEqual(deriveAutoTags({ bootable: [], volumeId: null }), []);
     assert.deepEqual(deriveAutoTags(null), []);
+});
+
+test('deriveAutoTags verwirft eine volumeId, die safeTag nicht akzeptiert', () => {
+    // Enthaelt "/", das safeTag() nicht erlaubt -> kein drittes Tag, BIOS/UEFI bleiben
+    assert.deepEqual(
+        deriveAutoTags({ bootable: ['BIOS', 'UEFI'], volumeId: 'ARCHIV/2024' }),
+        ['BIOS', 'UEFI']
+    );
+});
+
+test('deriveAutoTags dedupliziert case-insensitiv, wenn die volumeId einer Bootplattform entspricht', () => {
+    assert.deepEqual(
+        deriveAutoTags({ bootable: ['BIOS'], volumeId: 'bios' }),
+        ['BIOS'],
+        'der zuerst hinzugefuegte Kandidat (BIOS aus bootable) gewinnt in der urspruenglichen Schreibweise'
+    );
 });
 
 test('applyAutoTags dupliziert nichts bei einem erneuten Rescan', () => {
@@ -337,13 +450,34 @@ test('applyAutoTags haelt die Gesamtzahl im Limit', () => {
     assert.deepEqual(result.autoTags, ['BIOS']);
 });
 
+test('applyAutoTags fuegt keine Auto-Tags mehr hinzu, wenn schon allein die manuellen Tags das Limit erreichen', () => {
+    const meta = { tags: ['a', 'b', 'c'], autoTags: [] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI'], 3);
+    assert.deepEqual(result.tags, ['a', 'b', 'c'], 'manuelle Tags duerfen durchs Limit nie gekappt werden');
+    assert.deepEqual(result.autoTags, []);
+});
+
+test('applyAutoTags dupliziert einen manuellen Tag nicht, der zufaellig mit einem neuen Kandidaten uebereinstimmt', () => {
+    // 'BIOS' wurde nie automatisch vergeben (autoTags: []) -> gilt als manuell
+    const meta = { tags: ['BIOS'], autoTags: [] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI'], 15);
+    assert.deepEqual(result.tags, ['BIOS', 'UEFI']);
+    assert.deepEqual(result.autoTags, ['UEFI'], 'BIOS bleibt manuell und wird nicht zusaetzlich als Auto-Tag gefuehrt');
+});
+
+test('applyAutoTags erkennt einen entfernten Auto-Tag case-insensitiv wieder', () => {
+    const meta = { tags: [], autoTags: [], removedAutoTags: ['uefi'] };
+    const result = applyAutoTags(meta, ['BIOS', 'UEFI'], 15);
+    assert.deepEqual(result.tags, ['BIOS'], 'GROSS/klein darf removedAutoTags nicht umgehen');
+});
+
 test('hash-queue vergibt Auto-Tags und haengt sie bei einem Rescan nicht doppelt an', async () => {
     const root = await tempDir();
     const uploadsDir = path.join(root, 'uploads');
     await fsp.mkdir(uploadsDir, { recursive: true });
     const file = path.join(uploadsDir, 'x.iso');
 
-    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const metadata = createMetadataStore({ db: memoryDb() });
     const queue = createHashQueue({ uploadsDir, metadata, log: { error() {} } });
 
     await fsp.writeFile(file, makeIso({ volumeId: 'ARCHIV' }));
@@ -377,10 +511,10 @@ test('hash-queue traegt Auto-Tags bei laengst gehashten Bestandsdateien nach, oh
     const file = path.join(uploadsDir, 'x.iso');
     await fsp.writeFile(file, makeIso({ volumeId: 'ARCHIV' }));
 
-    const metadata = createMetadataStore({ dir: path.join(uploadsDir, '.meta') });
+    const metadata = createMetadataStore({ db: memoryDb() });
     const stats = await fsp.stat(file);
     const iso = await readIsoInfo(file);
-    // Sidecar wie vor dem Auto-Tag-Feature: Checksumme/ISO-Info schon
+    // Datensatz wie vor dem Auto-Tag-Feature: Checksumme/ISO-Info schon
     // vorhanden und aktuell, aber kein autoTags-Feld.
     await metadata.update('x.iso', {
         size: stats.size,
@@ -408,6 +542,7 @@ test('hash-queue traegt Auto-Tags bei laengst gehashten Bestandsdateien nach, oh
 test('Chunk-Upload setzt am Serverstand fort', async () => {
     const root = await tempDir();
     const sessions = createUploadSessions({
+        db: memoryDb(),
         tmpDir: path.join(root, 'tmp'),
         uploadsDir: path.join(root, 'uploads'),
         maxBytes: 1000,
@@ -443,6 +578,7 @@ test('Chunk-Upload setzt am Serverstand fort', async () => {
 test('falscher Offset wird mit 409 und dem echten Stand abgelehnt', async () => {
     const root = await tempDir();
     const sessions = createUploadSessions({
+        db: memoryDb(),
         tmpDir: path.join(root, 'tmp'),
         uploadsDir: path.join(root, 'uploads'),
         maxBytes: 1000,
@@ -468,6 +604,7 @@ test('falscher Offset wird mit 409 und dem echten Stand abgelehnt', async () => 
 test('mehr Bytes als angekuendigt werden gekappt und abgelehnt', async () => {
     const root = await tempDir();
     const sessions = createUploadSessions({
+        db: memoryDb(),
         tmpDir: path.join(root, 'tmp'),
         uploadsDir: path.join(root, 'uploads'),
         maxBytes: 10_000,
@@ -485,6 +622,7 @@ test('mehr Bytes als angekuendigt werden gekappt und abgelehnt', async () => {
 test('Upload-Sitzungen pruefen Name, Groesse und Limit', async () => {
     const root = await tempDir();
     const sessions = createUploadSessions({
+        db: memoryDb(),
         tmpDir: path.join(root, 'tmp'),
         uploadsDir: path.join(root, 'uploads'),
         maxBytes: 1000,
@@ -512,6 +650,7 @@ test('cleanupStale raeumt alte Sitzungen und verwaiste .part-Dateien', async () 
     const root = await tempDir();
     const tmpDir = path.join(root, 'tmp');
     const sessions = createUploadSessions({
+        db: memoryDb(),
         tmpDir,
         uploadsDir: path.join(root, 'uploads'),
         maxBytes: 1000,
@@ -532,83 +671,158 @@ test('cleanupStale raeumt alte Sitzungen und verwaiste .part-Dateien', async () 
     await fsp.rm(root, { recursive: true, force: true });
 });
 
+test('gleichzeitige Chunks auf dieselbe Sitzung: der zweite bekommt 409 statt zu ueberschreiben', async () => {
+    const root = await tempDir();
+    const sessions = createUploadSessions({
+        db: memoryDb(),
+        tmpDir: path.join(root, 'tmp'),
+        uploadsDir: path.join(root, 'uploads'),
+        maxBytes: 10_000,
+    });
+    const created = await sessions.create({ name: 'x.iso', size: 200 });
+
+    async function* slow() {
+        yield Buffer.alloc(50);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        yield Buffer.alloc(50);
+    }
+
+    const firstPromise = sessions.append(created.id, 0, slow());
+    await new Promise(resolve => setTimeout(resolve, 10)); // sicherstellen, dass der erste Aufruf schon "busy" gesetzt hat
+
+    await assert.rejects(
+        () => sessions.append(created.id, 0, Readable.from([Buffer.alloc(10)])),
+        err => err.status === 409 && /bereits ein Chunk/.test(err.message)
+    );
+
+    const state = await firstPromise;
+    assert.equal(state.offset, 100, 'der erste, nicht abgebrochene Aufruf muss trotzdem vollstaendig durchlaufen');
+
+    await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('pendingHash liefert die bisherige Pruefsumme, ohne finish() zu verfaelschen', async () => {
+    const root = await tempDir();
+    const db = memoryDb();
+    const sessions = createUploadSessions({
+        db, tmpDir: path.join(root, 'tmp'), uploadsDir: path.join(root, 'uploads'), maxBytes: 10_000,
+    });
+
+    const payload = crypto.randomBytes(200);
+    const created = await sessions.create({ name: 'x.iso', size: 200 });
+    assert.equal(sessions.pendingHash(created.id), crypto.createHash('sha256').digest('hex'), 'leerer Hasher vor dem ersten Byte');
+
+    await sessions.append(created.id, 0, Readable.from([payload.subarray(0, 100)]));
+    assert.equal(
+        sessions.pendingHash(created.id),
+        crypto.createHash('sha256').update(payload.subarray(0, 100)).digest('hex')
+    );
+
+    await sessions.append(created.id, 100, Readable.from([payload.subarray(100)]));
+    const { sha256 } = await sessions.finish(created.id);
+    assert.equal(sha256, crypto.createHash('sha256').update(payload).digest('hex'),
+        'pendingHash() (hash.copy()) darf den eigentlichen Hasher in finish() nicht verbraucht haben');
+
+    await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('pendingHash liefert null, wenn der Hasher nicht (mehr) im Speicher ist (z.B. nach einem Neustart)', async () => {
+    const root = await tempDir();
+    const db = memoryDb();
+    const tmpDir = path.join(root, 'tmp');
+    const uploadsDir = path.join(root, 'uploads');
+
+    const first = createUploadSessions({ db, tmpDir, uploadsDir, maxBytes: 10_000 });
+    const created = await first.create({ name: 'x.iso', size: 100 });
+    await first.append(created.id, 0, Readable.from([Buffer.alloc(50)]));
+
+    // Neue Instanz auf derselben DB/demselben Verzeichnis simuliert einen
+    // Neustart: die Hasher-Map ist ein reiner In-Memory-Zustand und daher leer.
+    const restarted = createUploadSessions({ db, tmpDir, uploadsDir, maxBytes: 10_000 });
+    assert.equal(restarted.pendingHash(created.id), null);
+
+    await restarted.append(created.id, 50, Readable.from([Buffer.alloc(50)]));
+    const { sha256 } = await restarted.finish(created.id);
+    assert.equal(sha256, null, 'ohne Hasher bleibt die Pruefsumme null, die Hash-Queue liefert sie spaeter nach');
+
+    await fsp.rm(root, { recursive: true, force: true });
+});
+
 /* ========================================================= session-store */
 
-test('Session-Store haelt Sitzungen ueber Instanzen hinweg', async () => {
-    const dir = await tempDir();
+test('Session-Store haelt Sitzungen ueber Instanzen (Neustarts) hinweg', async () => {
+    const { open, cleanup } = await restartDb();
 
-    const first = new FileSessionStore({ dir });
+    const firstDb = open();
+    const first = new SqliteSessionStore({ db: firstDb });
     await promisify(first.set).bind(first)('sid-eins', {
         loggedIn: true,
         cookie: { expires: new Date(Date.now() + 60_000), maxAge: 60_000 },
     });
     first.close();
+    firstDb.close();
 
-    // Neue Instanz = simulierter Neustart. Genau das ging im MemoryStore
-    // verloren.
-    const second = new FileSessionStore({ dir });
+    // Neue DB-Verbindung zur selben Datei = simulierter Neustart.
+    const secondDb = open();
+    const second = new SqliteSessionStore({ db: secondDb });
     const session = await promisify(second.get).bind(second)('sid-eins');
     assert.equal(session.loggedIn, true);
     second.close();
+    secondDb.close();
 
-    await fsp.rm(dir, { recursive: true, force: true });
+    await cleanup();
 });
 
-test('Session-Store verwirft Abgelaufenes und ungueltige IDs', async () => {
-    const dir = await tempDir();
-    const store = new FileSessionStore({ dir });
+test('Session-Store verwirft Abgelaufenes und unbekannte IDs', async () => {
+    const store = new SqliteSessionStore({ db: memoryDb() });
     const get = promisify(store.get).bind(store);
     const set = promisify(store.set).bind(store);
 
     await set('abgelaufen', { cookie: { expires: new Date(Date.now() - 1000) } });
     assert.equal(await get('abgelaufen'), null);
-    // get() entsorgt die Datei gleich mit
-    assert.equal(fs.existsSync(path.join(dir, 'abgelaufen.json')), false);
+    // get() entsorgt die Zeile gleich mit
+    assert.equal(store.countStmt.get().n, 0);
 
-    assert.equal(await get('../../../etc/passwd'), null);
     assert.equal(await get('nicht-vorhanden'), null);
 
-    await fsp.writeFile(path.join(dir, 'muell.json'), 'kein json');
-    assert.equal(await get('muell'), null);
-
     store.close();
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('prune entfernt abgelaufene Sitzungsdateien', async () => {
-    const dir = await tempDir();
-    const store = new FileSessionStore({ dir });
+test('prune entfernt abgelaufene Sitzungen', async () => {
+    const store = new SqliteSessionStore({ db: memoryDb() });
     const set = promisify(store.set).bind(store);
 
     await set('lebt', { cookie: { expires: new Date(Date.now() + 60_000) } });
     await set('totA', { cookie: { expires: new Date(Date.now() - 1) } });
     await set('totB', { cookie: { expires: new Date(Date.now() - 1) } });
 
-    assert.equal(await store.prune(), 2);
+    assert.equal(store.prune(), 2);
     assert.equal(await promisify(store.length).bind(store)(), 1);
 
     store.close();
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 /* ========================================================= webauthn-store */
 
-test('getOrCreateUserId ist stabil, auch ueber Instanzen hinweg', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+test('getOrCreateUserId ist stabil, auch ueber Instanzen (Neustarts) hinweg', async () => {
+    const { open, cleanup } = await restartDb();
 
+    const firstDb = open();
+    const store = createWebauthnStore({ db: firstDb });
     const id = await store.getOrCreateUserId();
     assert.equal(await store.getOrCreateUserId(), id);
+    firstDb.close();
 
-    const restarted = createWebauthnStore({ dir });
+    const secondDb = open();
+    const restarted = createWebauthnStore({ db: secondDb });
     assert.equal(await restarted.getOrCreateUserId(), id);
+    secondDb.close();
 
-    await fsp.rm(dir, { recursive: true, force: true });
+    await cleanup();
 });
 
 test('addCredential/findCredential geben alle Felder unveraendert zurueck', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+    const store = createWebauthnStore({ db: memoryDb() });
 
     await store.addCredential({
         credentialId: 'cred-1',
@@ -625,36 +839,28 @@ test('addCredential/findCredential geben alle Felder unveraendert zurueck', asyn
     assert.deepEqual(found.transports, ['internal']);
     assert.equal(found.label, 'Windows Hello');
     assert.equal(typeof found.createdAt, 'number');
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('addCredential wirft bei doppelter credentialId', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+    const store = createWebauthnStore({ db: memoryDb() });
     await store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'A' });
     await assert.rejects(() =>
         store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'B' })
     );
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('listCredentials enthaelt nie den publicKey', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+    const store = createWebauthnStore({ db: memoryDb() });
     await store.addCredential({ credentialId: 'x', publicKey: 'geheim', counter: 0, label: 'A' });
 
     const list = await store.listCredentials();
     assert.equal(list.length, 1);
     assert.equal(list[0].credentialId, 'x');
     assert.equal('publicKey' in list[0], false);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('updateCounter persistiert, removeCredential entfernt', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+    const store = createWebauthnStore({ db: memoryDb() });
     await store.addCredential({ credentialId: 'x', publicKey: 'k', counter: 0, label: 'A' });
 
     await store.updateCounter('x', 5);
@@ -664,25 +870,16 @@ test('updateCounter persistiert, removeCredential entfernt', async () => {
     assert.equal(await store.removeCredential('x'), true);
     assert.equal(await store.findCredential('x'), null);
     assert.deepEqual(await store.listCredentials(), []);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('kaputte/fehlende webauthn.json gilt als "keine Passkeys"', async () => {
-    const dir = await tempDir();
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(path.join(dir, 'webauthn.json'), '{ kein json');
-
-    const store = createWebauthnStore({ dir });
+test('keine Passkeys ist der Ausgangszustand einer frischen DB', async () => {
+    const store = createWebauthnStore({ db: memoryDb() });
     assert.deepEqual(await store.listCredentials(), []);
     assert.equal(typeof (await store.getOrCreateUserId()), 'string');
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('parallele addCredential-Aufrufe landen beide', async () => {
-    const dir = await tempDir();
-    const store = createWebauthnStore({ dir });
+    const store = createWebauthnStore({ db: memoryDb() });
 
     await Promise.all([
         store.addCredential({ credentialId: 'a', publicKey: 'k', counter: 0, label: 'A' }),
@@ -691,88 +888,158 @@ test('parallele addCredential-Aufrufe landen beide', async () => {
 
     const list = await store.listCredentials();
     assert.deepEqual(list.map(c => c.credentialId).sort(), ['a', 'b']);
+});
 
-    await fsp.rm(dir, { recursive: true, force: true });
+/* ======================================================== api-token-store */
+
+test('createToken gibt das Klartext-Token genau einmal zurueck, findByToken findet es wieder', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+
+    const created = await store.createToken({ label: 'CI', scopes: ['read', 'write'] });
+    assert.match(created.token, /^iso_/);
+    assert.equal(created.label, 'CI');
+    assert.deepEqual(created.scopes, ['read', 'write']);
+
+    const found = await store.findByToken(created.token);
+    assert.equal(found.id, created.id);
+    assert.deepEqual(found.scopes, ['read', 'write']);
+    assert.equal('token' in found, false, 'findByToken darf das Klartext-Token nicht zurueckgeben');
+});
+
+test('findByToken liefert null fuer unbekannte/manipulierte Tokens', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+    await store.createToken({ label: 'x', scopes: ['read'] });
+
+    assert.equal(await store.findByToken('iso_nichtvorhanden'), null);
+    assert.equal(await store.findByToken(''), null);
+});
+
+test('createToken lehnt unbekannte Scopes ab', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+    assert.equal(await store.createToken({ label: 'x', scopes: ['admin'] }), null);
+    assert.equal(await store.createToken({ label: 'x', scopes: [] }), null);
+});
+
+test('listTokens enthaelt nie token oder token_hash', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+    await store.createToken({ label: 'A', scopes: ['read'] });
+
+    const list = await store.listTokens();
+    assert.equal(list.length, 1);
+    assert.equal('token' in list[0], false);
+    assert.equal('tokenHash' in list[0], false);
+    assert.equal('token_hash' in list[0], false);
+});
+
+test('revokeToken entfernt das Token, findByToken schlaegt danach fehl', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+    const created = await store.createToken({ label: 'A', scopes: ['read'] });
+
+    assert.equal(await store.revokeToken('nicht-vorhanden'), false);
+    assert.equal(await store.revokeToken(created.id), true);
+    assert.equal(await store.findByToken(created.token), null);
+    assert.deepEqual(await store.listTokens(), []);
+});
+
+test('findByToken aktualisiert lastUsedAt', async () => {
+    const store = createApiTokenStore({ db: memoryDb() });
+    const created = await store.createToken({ label: 'A', scopes: ['read'] });
+    assert.equal((await store.listTokens())[0].lastUsedAt, null);
+
+    await store.findByToken(created.token);
+    assert.equal(typeof (await store.listTokens())[0].lastUsedAt, 'number');
+});
+
+/* ==================================================== session-secret-store */
+
+test('ensure() persistiert den Kandidaten beim ersten Aufruf und liefert ihn danach zurueck', async () => {
+    const store = createSessionSecretStore({ db: memoryDb() });
+
+    assert.equal(store.read(), null);
+    assert.equal(store.ensure('erster-kandidat'), 'erster-kandidat');
+    assert.equal(store.read(), 'erster-kandidat');
+
+    // Ein zweiter Kandidat (z. B. eine geaenderte Env-Var) darf den
+    // persistierten Wert nicht mehr ueberschreiben.
+    assert.equal(store.ensure('zweiter-kandidat'), 'erster-kandidat');
+    assert.equal(store.read(), 'erster-kandidat');
+});
+
+test('session-secret ueberlebt eine neue Store-Instanz (simulierter Neustart)', async () => {
+    const { open, cleanup } = await restartDb();
+
+    const firstDb = open();
+    const first = createSessionSecretStore({ db: firstDb });
+    first.ensure('bootstrap-secret');
+    firstDb.close();
+
+    const secondDb = open();
+    const second = createSessionSecretStore({ db: secondDb });
+    // Ein Neustart ohne gesetzte Env-Var wuerde hier sonst einen neuen
+    // Kandidaten anbieten — der persistierte Wert muss trotzdem gewinnen.
+    assert.equal(second.ensure('anderer-kandidat-nach-neustart'), 'bootstrap-secret');
+    secondDb.close();
+
+    await cleanup();
 });
 
 /* ========================================================== password-store */
 
 test('setPassword/verify: richtiges Passwort true, falsches false', async () => {
-    const dir = await tempDir();
-    const store = createPasswordStore({ file: path.join(dir, 'admin-password.json') });
+    const store = createPasswordStore({ db: memoryDb() });
 
     const record = await store.setPassword('korrekt-horse-battery');
     assert.equal(await store.verify('korrekt-horse-battery', record), true);
     assert.equal(await store.verify('falsch', record), false);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('read() liefert null bei fehlender/kaputter Datei', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'admin-password.json');
-    const store = createPasswordStore({ file });
-
+test('read() liefert null, solange kein Passwort gesetzt wurde', async () => {
+    const store = createPasswordStore({ db: memoryDb() });
     assert.equal(await store.read(), null);
-
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(file, '{ kein json');
-    assert.equal(await store.read(), null);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('Passwort-Hash ueberlebt eine neue Store-Instanz (simulierter Neustart)', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'admin-password.json');
+    const { open, cleanup } = await restartDb();
 
-    const first = createPasswordStore({ file });
+    const firstDb = open();
+    const first = createPasswordStore({ db: firstDb });
     await first.setPassword('neues-passwort');
+    firstDb.close();
 
-    const second = createPasswordStore({ file });
+    const secondDb = open();
+    const second = createPasswordStore({ db: secondDb });
     const record = await second.read();
     assert.notEqual(record, null);
     assert.equal(await second.verify('neues-passwort', record), true);
+    secondDb.close();
 
-    await fsp.rm(dir, { recursive: true, force: true });
+    await cleanup();
 });
 
 /* ========================================================== username-store */
 
 test('write/read: Roundtrip liefert genau den gespeicherten Benutzernamen', async () => {
-    const dir = await tempDir();
-    const store = createUsernameStore({ file: path.join(dir, 'admin-username.json') });
+    const store = createUsernameStore({ db: memoryDb() });
 
     assert.equal(await store.read(), null);
     await store.write('julian');
     assert.equal(await store.read(), 'julian');
-
-    await fsp.rm(dir, { recursive: true, force: true });
-});
-
-test('username-store: read() liefert null bei kaputter Datei', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'admin-username.json');
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(file, '{ kein json');
-
-    const store = createUsernameStore({ file });
-    assert.equal(await store.read(), null);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('Benutzername ueberlebt eine neue Store-Instanz (simulierter Neustart)', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'admin-username.json');
+    const { open, cleanup } = await restartDb();
 
-    const first = createUsernameStore({ file });
+    const firstDb = open();
+    const first = createUsernameStore({ db: firstDb });
     await first.write('neuer-name');
+    firstDb.close();
 
-    const second = createUsernameStore({ file });
+    const secondDb = open();
+    const second = createUsernameStore({ db: secondDb });
     assert.equal(await second.read(), 'neuer-name');
+    secondDb.close();
 
-    await fsp.rm(dir, { recursive: true, force: true });
+    await cleanup();
 });
 
 /* ================================================================== totp */
@@ -827,18 +1094,14 @@ test('buildOtpauthUri enthaelt Secret, Label und Issuer', () => {
 /* ============================================================ totp-store */
 
 test('totp-store: isEnabled/getSecret vor dem Aktivieren', async () => {
-    const dir = await tempDir();
-    const store = createTotpStore({ dir });
+    const store = createTotpStore({ db: memoryDb() });
 
     assert.equal(await store.isEnabled(), false);
     assert.equal(await store.getSecret(), null);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('totp-store: enable() persistiert und liefert 8 einmalige Recovery-Codes', async () => {
-    const dir = await tempDir();
-    const store = createTotpStore({ dir });
+    const store = createTotpStore({ db: memoryDb() });
 
     const codes = await store.enable('JBSWY3DPEHPK3PXP');
     assert.equal(codes.length, 8);
@@ -847,38 +1110,59 @@ test('totp-store: enable() persistiert und liefert 8 einmalige Recovery-Codes', 
 
     assert.equal(await store.isEnabled(), true);
     assert.equal(await store.getSecret(), 'JBSWY3DPEHPK3PXP');
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('totp-store: consumeRecoveryCode verbraucht einen Code genau einmal', async () => {
-    const dir = await tempDir();
-    const store = createTotpStore({ dir });
+    const store = createTotpStore({ db: memoryDb() });
     const [firstCode] = await store.enable('JBSWY3DPEHPK3PXP');
 
     assert.equal(await store.consumeRecoveryCode('nicht-vorhanden'), false);
     assert.equal(await store.consumeRecoveryCode(firstCode), true);
     assert.equal(await store.consumeRecoveryCode(firstCode), false, 'derselbe Code darf kein zweites Mal gelten');
+});
 
-    await fsp.rm(dir, { recursive: true, force: true });
+test('totp-store: enable() ist alles-oder-nichts, wenn ein Recovery-Code-Insert mittendrin fehlschlaegt', async () => {
+    // Statements werden beim createTotpStore()-Aufruf selbst vorbereitet, das
+    // Patchen muss also vorher an der rohen db ansetzen, nicht erst am
+    // zurueckgegebenen Store.
+    const db = memoryDb();
+    const originalPrepare = db.prepare.bind(db);
+    let codeInserts = 0;
+    db.prepare = sql => {
+        const stmt = originalPrepare(sql);
+        if (sql.includes('INSERT INTO totp_recovery_codes')) {
+            const originalRun = stmt.run.bind(stmt);
+            stmt.run = (...args) => {
+                codeInserts += 1;
+                // Simuliert einen Fehler beim Schreiben eines Recovery-Codes
+                // (z. B. Platte voll) — ohne Transaktion bliebe TOTP als
+                // "aktiviert" stehen, obwohl nur ein Teil der Codes existiert.
+                if (codeInserts === 4) throw new Error('simulierter Fehler beim Schreiben');
+                return originalRun(...args);
+            };
+        }
+        return stmt;
+    };
+    const store = createTotpStore({ db });
+
+    await assert.rejects(() => store.enable('JBSWY3DPEHPK3PXP'));
+
+    assert.equal(await store.isEnabled(), false, 'ein fehlgeschlagener enable() darf TOTP nicht halb aktiviert lassen');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM totp_recovery_codes').get().n, 0);
 });
 
 test('totp-store: disable() entfernt den Datensatz vollstaendig', async () => {
-    const dir = await tempDir();
-    const store = createTotpStore({ dir });
+    const store = createTotpStore({ db: memoryDb() });
     await store.enable('JBSWY3DPEHPK3PXP');
     await store.disable();
 
     assert.equal(await store.isEnabled(), false);
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 /* ============================================================= audit-log */
 
 test('audit-log: log()/read() liefern die juengsten Eintraege zuerst', async () => {
-    const dir = await tempDir();
-    const auditLog = createAuditLog({ file: path.join(dir, 'audit.log') });
+    const auditLog = createAuditLog({ db: memoryDb() });
 
     await auditLog.log('login_success', { ip: '127.0.0.1' });
     await auditLog.log('upload', { filename: 'a.iso' });
@@ -889,54 +1173,41 @@ test('audit-log: log()/read() liefern die juengsten Eintraege zuerst', async () 
     assert.equal(entries[1].event, 'login_success');
     assert.equal(entries[0].filename, 'a.iso');
     assert.equal(typeof entries[0].ts, 'number');
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
-test('audit-log: read() ohne vorhandene Datei liefert eine leere Liste', async () => {
-    const dir = await tempDir();
-    const auditLog = createAuditLog({ file: path.join(dir, 'fehlt', 'audit.log') });
-    assert.deepEqual(await auditLog.read(), []);
-    await fsp.rm(dir, { recursive: true, force: true });
-});
+test('audit-log: read() liefert die id mit, aufsteigend vergeben (fuer den Heartbeat)', async () => {
+    const auditLog = createAuditLog({ db: memoryDb() });
 
-test('audit-log: eine kaputte Zeile wird uebersprungen statt die Liste zu verwerfen', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'audit.log');
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(file, '{"ts":1,"event":"ok"}\nkein json\n{"ts":2,"event":"auch-ok"}\n');
+    await auditLog.log('login_success', { ip: '127.0.0.1' });
+    await auditLog.log('upload', { filename: 'a.iso' });
 
-    const auditLog = createAuditLog({ file });
     const entries = await auditLog.read();
-    assert.equal(entries.length, 2);
-    assert.deepEqual(entries.map(e => e.event), ['auch-ok', 'ok']);
-
-    await fsp.rm(dir, { recursive: true, force: true });
+    assert.equal(typeof entries[0].id, 'number');
+    assert.ok(entries[0].id > entries[1].id, 'neueste Eintraege haben die groessere id');
 });
 
-test('audit-log: kuerzt die Datei, sobald sie das Groessenlimit ueberschreitet', async () => {
-    const dir = await tempDir();
-    const file = path.join(dir, 'audit.log');
-    const auditLog = createAuditLog({ file });
-    // Direkt eine grosse Datei simulieren statt zehntausender einzelner
-    // log()-Aufrufe — realistische Zeilengroesse, damit 3000 behaltene
-    // Zeilen tatsaechlich unter dem Limit landen.
-    await fsp.mkdir(dir, { recursive: true });
-    const lines = [];
-    for (let i = 0; i < 80000; i++) {
-        lines.push(JSON.stringify({ ts: i, event: 'filler', ip: '127.0.0.1' }));
-    }
-    await fsp.writeFile(file, `${lines.join('\n')}\n`);
-    assert.ok((await fsp.stat(file)).size > 2 * 1024 * 1024, 'Testaufbau muss ueber dem Limit starten');
+test('audit-log: read() ohne Eintraege liefert eine leere Liste', async () => {
+    const auditLog = createAuditLog({ db: memoryDb() });
+    assert.deepEqual(await auditLog.read(), []);
+});
+
+test('audit-log: read({limit: Infinity}) liefert alle Eintraege', async () => {
+    const auditLog = createAuditLog({ db: memoryDb() });
+    for (let i = 0; i < 5; i++) await auditLog.log('ereignis', { i });
+    assert.equal((await auditLog.read({ limit: Infinity })).length, 5);
+});
+
+test('audit-log: kuerzt auf die juengsten Zeilen, sobald das Zeilenlimit ueberschritten wird', async () => {
+    const auditLog = createAuditLog({ db: memoryDb(), maxRows: 50, keepRowsOnTrim: 30 });
+
+    for (let i = 0; i < 50; i++) await auditLog.log('filler', { i });
+    assert.equal((await auditLog.read({ limit: Infinity })).length, 50, 'am Limit wird noch nicht gekuerzt');
 
     await auditLog.log('neuestes_ereignis', {});
 
-    const stats = await fsp.stat(file);
-    assert.ok(stats.size < 2 * 1024 * 1024, 'Datei muss nach dem Schreiben gekuerzt worden sein');
-    const entries = await auditLog.read({ limit: 1 });
+    const entries = await auditLog.read({ limit: Infinity });
+    assert.equal(entries.length, 30, 'muss nach dem Schreiben auf keepRowsOnTrim gekuerzt worden sein');
     assert.equal(entries[0].event, 'neuestes_ereignis', 'juengster Eintrag darf beim Kuerzen nie verloren gehen');
-
-    await fsp.rm(dir, { recursive: true, force: true });
 });
 
 /* ============================================================= zip-stream */

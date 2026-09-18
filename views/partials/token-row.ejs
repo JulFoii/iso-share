@@ -1,0 +1,8 @@
+<li class="row row--between" data-token-id="<%= token.id %>">
+  <span>
+    <%= token.label || 'Unbenanntes Token' %>
+    <% token.scopes.forEach(scope => { %><span class="badge badge--mono"><%= scope %></span> <% }); %>
+    <span class="hint">— erstellt <%= formatDate(token.createdAt) %><%= token.lastUsedAt ? ', zuletzt genutzt ' + formatDate(token.lastUsedAt) : ', noch nicht genutzt' %></span>
+  </span>
+  <button type="button" class="btn btn--danger-ghost btn--sm" data-token-delete="<%= token.id %>">Entfernen</button>
+</li>

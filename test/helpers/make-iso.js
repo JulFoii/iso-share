@@ -13,7 +13,9 @@ function writeFixed(buf, offset, text, length, pad = ' ') {
     buf.write(value, offset, length, 'latin1');
 }
 
-function primaryVolumeDescriptor({ volumeId, blocks, createdAt, publisher }) {
+function primaryVolumeDescriptor({
+    volumeId, blocks, createdAt, publisher, blockSize = SECTOR, tzOffsetQuarters = 0,
+}) {
     const buf = Buffer.alloc(SECTOR);
     buf[0] = 1;                                    // Typ: Primary
     writeFixed(buf, 1, 'CD001', 5);
@@ -22,22 +24,22 @@ function primaryVolumeDescriptor({ volumeId, blocks, createdAt, publisher }) {
     writeFixed(buf, 40, volumeId, 32);             // Volume Identifier
     buf.writeUInt32LE(blocks, 80);                 // Volume Space Size (LE)
     buf.writeUInt32BE(blocks, 84);                 //                   (BE)
-    buf.writeUInt16LE(SECTOR, 128);                // Logical Block Size (LE)
-    buf.writeUInt16BE(SECTOR, 130);                //                    (BE)
+    buf.writeUInt16LE(blockSize, 128);             // Logical Block Size (LE)
+    buf.writeUInt16BE(blockSize, 130);             //                    (BE)
     writeFixed(buf, 318, publisher ?? '', 128);
     // 16 Ziffern plus ein *binaeres* Byte mit dem Zeitzonen-Offset in
     // 15-Minuten-Schritten. 0 = UTC — als ASCII '0' waeren es +12 h.
     writeFixed(buf, 813, createdAt ?? '0'.repeat(16), 16, '0');
-    buf[829] = 0;
+    buf.writeInt8(tzOffsetQuarters, 829);
     return buf;
 }
 
-function bootRecord(catalogSector) {
+function bootRecord(catalogSector, systemId = 'EL TORITO SPECIFICATION') {
     const buf = Buffer.alloc(SECTOR);
     buf[0] = 0;                                    // Typ: Boot Record
     writeFixed(buf, 1, 'CD001', 5);
     buf[6] = 1;
-    writeFixed(buf, 7, 'EL TORITO SPECIFICATION', 32, '\0');
+    writeFixed(buf, 7, systemId, 32, '\0');
     buf.writeUInt32LE(catalogSector, 71);
     return buf;
 }
@@ -79,6 +81,11 @@ function makeIso({
     createdAt = '2026010112300000',
     publisher = 'ISO SHARE',
     padSectors = 4,
+    blockSize = SECTOR,
+    tzOffsetQuarters = 0,
+    bootSystemId = 'EL TORITO SPECIFICATION',
+    catalogSectorOverride = null,
+    extraPvd = null,
 } = {}) {
     const bootable = platformIds.length > 0;
     const sectors = [
@@ -91,8 +98,22 @@ function makeIso({
         blocks: FIRST_DESCRIPTOR_SECTOR + 3 + padSectors,
         createdAt,
         publisher,
+        blockSize,
+        tzOffsetQuarters,
     }));
-    if (bootable) sectors.push(bootRecord(catalogSector));
+    if (extraPvd) {
+        // Ein zweiter Primary Volume Descriptor, wie ihn manche Brenner
+        // faelschlich erzeugen — lib/iso9660.js muss beim ersten bleiben.
+        sectors.push(primaryVolumeDescriptor({
+            volumeId: extraPvd,
+            blocks: FIRST_DESCRIPTOR_SECTOR + 3 + padSectors,
+            createdAt,
+            publisher,
+        }));
+    }
+    if (bootable) {
+        sectors.push(bootRecord(catalogSectorOverride ?? catalogSector, bootSystemId));
+    }
     sectors.push(terminator());
     if (bootable) {
         // Terminator liegt auf Sektor 18, der Katalog soll auf 19 landen

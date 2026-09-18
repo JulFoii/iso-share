@@ -58,6 +58,83 @@ test('/checksums liefert eine SHA256SUMS-Datei im coreutils-Format', async t => 
     assert.equal(body, `${expected}  debian.iso\n`);
 });
 
+test('/api/files.json liefert dieselben Felder wie die Startseite, gefiltert per ?q=', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const content = await seedIso(app, 'fedora.iso', { volumeId: 'FEDORA_40' });
+    await seedIso(app, 'debian.iso', { volumeId: 'DEBIAN_12' });
+    const expected = crypto.createHash('sha256').update(content).digest('hex');
+
+    const res = await fetch(app.url('/api/files.json'));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/json/);
+    const files = await res.json();
+    assert.equal(files.length, 2);
+    const fedora = files.find(f => f.name === 'fedora.iso');
+    assert.equal(fedora.sha256, expected);
+    assert.equal(fedora.iso.volumeId, 'FEDORA_40');
+    assert.equal(fedora.hashStatus, 'done');
+
+    const filtered = await (await fetch(app.url('/api/files.json?q=fedora'))).json();
+    assert.deepEqual(filtered.map(f => f.name), ['fedora.iso']);
+});
+
+test('/api/tags.json liefert dieselben Tags wie die Tag-Filterleiste, unabhaengig von der Suche', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    await seedIso(app, 'uefi.iso', { volumeId: 'UEFI_ONLY', platformIds: [0xef] });
+    await seedIso(app, 'bios.iso', { volumeId: 'BIOS_ONLY', platformIds: [0x00] });
+
+    const tags = await (await fetch(app.url('/api/tags.json'))).json();
+    assert.ok(Array.isArray(tags));
+    assert.ok(tags.length > 0);
+
+    const scoped = await (await fetch(app.url('/api/tags.json?q=uefi'))).json();
+    assert.deepEqual(scoped, tags, '/api/tags.json ignoriert q wie listAllTags()');
+});
+
+test('/partials/listing liefert gerenderte Dateizeilen und Tag-Filter fuer den Heartbeat', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    await seedIso(app, 'heartbeat.iso', { volumeId: 'HEARTBEAT', platformIds: [0xef] });
+
+    const res = await fetch(app.url('/partials/listing'), { headers: { Accept: 'application/json' } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/json/);
+    const body = await res.json();
+    assert.equal(body.visibleCount, 1);
+    assert.match(body.filesHtml, /heartbeat\.iso/);
+    assert.match(body.filesHtml, /data-row=/);
+    assert.match(body.tagsHtml, /uefi/i);
+});
+
+test('/admin/partials/listing: nur mit Sitzung erreichbar, liefert Dateien/Tags/Audit-Log/Passkeys/Tokens', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const noSession = await fetch(app.url('/admin/partials/listing'), { headers: { Accept: 'application/json' } });
+    assert.equal(noSession.status, 401);
+
+    const { cookie } = await app.login();
+    await seedIso(app, 'admin-heartbeat.iso');
+
+    const res = await fetch(app.url('/admin/partials/listing'), {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.match(body.filesHtml, /admin-heartbeat\.iso/);
+    assert.equal(typeof body.tagsHtml, 'string');
+    assert.equal(typeof body.passkeysHtml, 'string');
+    assert.equal(typeof body.apiTokensHtml, 'string');
+    assert.ok(Array.isArray(body.auditEntries));
+    assert.ok(body.auditEntries.some(entry => entry.event === 'login_success'));
+    assert.ok(body.auditEntries.every(entry => typeof entry.id === 'number'));
+});
+
 test('/checksums laesst noch nicht gehashte Dateien weg', async t => {
     const app = await startTestApp();
     t.after(() => app.close());
@@ -99,7 +176,6 @@ test('Download liefert die Datei und zaehlt sie', async t => {
 
     await fetch(app.url('/download/zaehl.iso'));
 
-    await app.services.metadata.flush();
     assert.equal((await app.services.metadata.read('zaehl.iso')).downloads, 2);
 });
 
@@ -116,7 +192,6 @@ test('Range-Requests werden nicht als eigener Download gezaehlt', async t => {
         assert.equal(res.status, 206);
     }
 
-    await app.services.metadata.flush();
     const meta = await app.services.metadata.read('range.iso');
     assert.equal(meta?.downloads ?? 0, 0,
         'ein Download-Manager mit acht Verbindungen ist ein Download, nicht acht');
@@ -164,6 +239,121 @@ test('Login: falsches Passwort 401, richtiges setzt eine Sitzung', async t => {
     assert.match(await admin.text(), /Verwaltung/);
 });
 
+test('Admin-Idle-Timeout: Sitzung wird nach Inaktivitaet verworfen und muss sich neu anmelden', async t => {
+    const app = await startTestApp({ adminIdleTimeoutMs: 500 });
+    t.after(() => app.close());
+
+    const { cookie } = await app.login();
+
+    const stillActive = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+    });
+    assert.equal(stillActive.status, 200, 'innerhalb des Idle-Fensters bleibt die Sitzung gueltig');
+
+    await new Promise(resolve => setTimeout(resolve, 700));
+
+    const idled = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(idled.status, 302);
+    assert.equal(idled.headers.get('location'), '/login?idle=1');
+
+    // Die verworfene Sitzung darf auch nach einer erneuten Anmeldung nicht
+    // wieder gueltig werden.
+    const stale = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(stale.status, 302);
+
+    const { cookie: freshCookie } = await app.login();
+    assert.notEqual(freshCookie, cookie, 'Neuanmeldung muss eine neue Session-ID vergeben');
+    const reAuthed = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: freshCookie },
+    });
+    assert.equal(reAuthed.status, 200);
+});
+
+test('/logout?idle=1 (clientseitig durch idle-timer.js erkannter Ablauf) landet auf /login?idle=1 mit Meldung', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const { cookie } = await app.login();
+
+    const loggedOut = await fetch(app.url('/logout?idle=1'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(loggedOut.status, 302);
+    assert.equal(loggedOut.headers.get('location'), '/login?idle=1');
+
+    const loginPage = await fetch(app.url('/login?idle=1'));
+    assert.match(await loginPage.text(), /Wegen Inaktivität abgemeldet/);
+
+    // Die Sitzung ist tatsaechlich verworfen, nicht nur weitergeleitet.
+    const afterLogout = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(afterLogout.status, 302);
+    assert.equal(afterLogout.headers.get('location'), '/login');
+});
+
+test('Normales /logout (ohne idle=1) landet weiterhin auf der oeffentlichen Startseite', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const { cookie } = await app.login();
+
+    const loggedOut = await fetch(app.url('/logout'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(loggedOut.status, 302);
+    assert.equal(loggedOut.headers.get('location'), '/');
+});
+
+test('/admin/ping verlaengert den Idle-Timeout, /admin/partials/listing mit X-Idle-Background nicht', async t => {
+    const app = await startTestApp({ adminIdleTimeoutMs: 500 });
+    t.after(() => app.close());
+
+    const { cookie } = await app.login();
+
+    // Ein als Hintergrund markierter Poll (wie ihn heartbeat.js schickt)
+    // darf die Sitzung nicht ueber das Idle-Fenster hinaus retten.
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const heartbeatPoll = await fetch(app.url('/admin/partials/listing'), {
+        headers: { Cookie: cookie, Accept: 'application/json', 'X-Idle-Background': '1' },
+    });
+    assert.equal(heartbeatPoll.status, 200);
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const idledDespitePolling = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(idledDespitePolling.status, 302,
+        'Hintergrund-Polling ohne echte Nutzeraktivitaet darf den Idle-Timeout nicht aushebeln');
+
+    // Ein echter Keepalive-Ping (wie ihn idle-timer.js bei Aktivitaet
+    // schickt) verlaengert die Sitzung dagegen wirklich.
+    const { cookie: freshCookie } = await app.login();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const ping = await fetch(app.url('/admin/ping'), {
+        headers: { Cookie: freshCookie },
+    });
+    assert.equal(ping.status, 204);
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const stillAliveAfterPing = await fetch(app.url('/admin-upload'), {
+        headers: { Cookie: freshCookie },
+        redirect: 'manual',
+    });
+    assert.equal(stillAliveAfterPing.status, 200,
+        'ein echter Ping muss lastActivity erneuern und die Sitzung ueber das urspruengliche Fenster hinaus verlaengern');
+});
+
 test('Sitzung ueberlebt einen Neustart des Servers', async t => {
     const app = await startTestApp();
     const { cookie } = await app.login();
@@ -176,7 +366,7 @@ test('Sitzung ueberlebt einen Neustart des Servers', async t => {
     const restarted = await startTestApp({
         uploadsDir: path.join(root, 'uploads'),
         tmpDir: path.join(root, 'tmp-uploads'),
-        sessionDir: path.join(root, 'sessions'),
+        dataDir: path.join(root, 'data'),
     });
     t.after(() => restarted.close());
 
@@ -185,6 +375,28 @@ test('Sitzung ueberlebt einen Neustart des Servers', async t => {
         redirect: 'manual',
     });
     assert.equal(res.status, 200, 'Cookie muss nach dem Neustart noch gelten');
+});
+
+test('Sitzung ueberlebt einen Neustart auch ohne gesetztes SESSION_SECRET (DB-Bootstrap statt fluechtigem Zufallswert)', async t => {
+    const app = await startTestApp({ sessionSecret: undefined });
+    const { cookie } = await app.login();
+    const root = app.root;
+
+    await app.shutdown();
+    const restarted = await startTestApp({
+        uploadsDir: path.join(root, 'uploads'),
+        tmpDir: path.join(root, 'tmp-uploads'),
+        dataDir: path.join(root, 'data'),
+        sessionSecret: undefined,
+    });
+    t.after(() => restarted.close());
+
+    const res = await fetch(restarted.url('/admin-upload'), {
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+    });
+    assert.equal(res.status, 200,
+        'ohne persistierten Session-Secret wuerde die neue Instanz mit einem anderen Zufallswert signieren und das Cookie waere ungueltig');
 });
 
 test('geschuetzte Routen ohne Sitzung: Redirect bzw. 401 fuer JSON', async t => {
@@ -350,7 +562,7 @@ test('geaendertes Passwort ueberlebt einen Neustart, ADMIN_PASSWORD der alten In
     const restarted = await startTestApp({
         uploadsDir: path.join(root, 'uploads'),
         tmpDir: path.join(root, 'tmp-uploads'),
-        sessionDir: path.join(root, 'sessions'),
+        dataDir: path.join(root, 'data'),
         // andere adminPassword-Option als beim ersten Start — darf keine
         // Rolle mehr spielen, sobald einmal ueber die UI geaendert wurde
         adminPassword: 'ignoriert-weil-persistiert',
@@ -359,6 +571,29 @@ test('geaendertes Passwort ueberlebt einen Neustart, ADMIN_PASSWORD der alten In
 
     assert.equal((await restarted.login('ignoriert-weil-persistiert')).res.status, 401);
     assert.equal((await restarted.login('persistiertes-passwort')).res.status, 302);
+});
+
+test('gesetztes ADMIN_PASSWORD wird schon beim ersten Start persistiert, eine spaeter geaenderte Env-Var wirkt nicht mehr', async t => {
+    const app = await startTestApp({ adminPassword: 'erster-start-passwort' });
+    const root = app.root;
+
+    // Schon nach dem ersten Start liegt ein Hash in der DB — nicht erst nach
+    // einer expliziten Aenderung ueber /admin-password.
+    assert.ok(await app.services.passwordStore.read());
+    await app.shutdown();
+
+    const restarted = await startTestApp({
+        uploadsDir: path.join(root, 'uploads'),
+        tmpDir: path.join(root, 'tmp-uploads'),
+        dataDir: path.join(root, 'data'),
+        adminPassword: 'andere-env-var-danach',
+    });
+    t.after(() => restarted.close());
+
+    assert.equal((await restarted.login('andere-env-var-danach')).res.status, 401,
+        'die beim zweiten Start abweichende Env-Var darf nicht mehr gelten');
+    assert.equal((await restarted.login('erster-start-passwort')).res.status, 302,
+        'das beim ersten Start bootstrappede Passwort muss weiter gelten');
 });
 
 /* ======================================================= Admin-Benutzername */
@@ -479,7 +714,7 @@ test('geaenderter Benutzername ueberlebt einen Neustart', async t => {
     const restarted = await startTestApp({
         uploadsDir: path.join(root, 'uploads'),
         tmpDir: path.join(root, 'tmp-uploads'),
-        sessionDir: path.join(root, 'sessions'),
+        dataDir: path.join(root, 'data'),
     });
     t.after(() => restarted.close());
 
@@ -488,6 +723,15 @@ test('geaenderter Benutzername ueberlebt einen Neustart', async t => {
         (await restarted.login('korrekt-horse-battery', 'persistierter-name')).res.status,
         302
     );
+});
+
+test('der Default-Benutzername wird schon beim ersten Start in die DB geschrieben', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    // Kein POST /admin-username noetig — start() bootstrappt den Default
+    // direkt in die DB, damit dort nicht "leer" steht.
+    assert.equal(await app.services.usernameStore.read(), 'admin');
 });
 
 test('ohne ADMIN_PASSWORD wird beim ersten Start genau einmal ein Passwort erzeugt und persistiert', async t => {
@@ -499,7 +743,7 @@ test('ohne ADMIN_PASSWORD wird beim ersten Start genau einmal ein Passwort erzeu
     const dirs = {
         uploadsDir: path.join(root, 'uploads'),
         tmpDir: path.join(root, 'tmp-uploads'),
-        sessionDir: path.join(root, 'sessions'),
+        dataDir: path.join(root, 'data'),
         sessionSecret: 'test-secret',
         scanOnStart: false,
         sweepStaleUploads: false,
@@ -526,7 +770,7 @@ test('ohne ADMIN_PASSWORD wird beim ersten Start genau einmal ein Passwort erzeu
     await first.start();
 
     // [^)]* statt [^:]* bis zum Ende der Klammer: der Pfad selbst enthaelt
-    // unter Windows ein Colon (z. B. "C:\...\admin-password.json").
+    // unter Windows ein Colon (z. B. "C:\...\iso-share.db").
     const match = warnings.join('\n').match(/Einmalig generiertes Passwort \([^)]*\):\n\s+(\S+)/);
     assert.ok(match, 'Passwort haette geloggt werden muessen');
     const generated = match[1];
@@ -715,6 +959,124 @@ test('abgebrochener Upload wird serverseitig entfernt', async t => {
     });
     assert.equal(del.status, 204);
     assert.equal((await app.services.uploadSessions.listSessions()).length, 0);
+});
+
+/* ==================================== Dedup und explizite Versions-Ersetzung */
+
+/* Fuehrt einen kompletten Chunk-Upload in einem Rutsch durch (ein Chunk). */
+async function chunkedUpload(app, cookie, { name, content, replaces }) {
+    const init = await fetch(app.url('/upload/init'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ name, size: content.length, replaces }),
+    });
+    const session = await init.json();
+    if (init.status !== 201) return { init, session };
+
+    const patch = await fetch(app.url(`/upload/${session.id}`), {
+        method: 'PATCH',
+        headers: {
+            Cookie: cookie,
+            'Content-Type': 'application/octet-stream',
+            'Upload-Offset': '0',
+        },
+        body: content,
+    });
+    assert.equal(patch.status, 200);
+
+    const finish = await fetch(app.url(`/upload/${session.id}/finish`), {
+        method: 'POST',
+        headers: { Cookie: cookie },
+    });
+    return { init, finish, body: await finish.json() };
+}
+
+test('Chunk-Upload lehnt inhaltsgleiche Datei unter anderem Namen ab', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const content = await seedIso(app, 'original.iso', { volumeId: 'DUP' });
+
+    const { finish, body } = await chunkedUpload(app, cookie, { name: 'kopie.iso', content });
+    assert.equal(finish.status, 409);
+    assert.equal(body.duplicateOf, 'original.iso');
+
+    await assert.rejects(fsp.access(path.join(app.uploadsDir, 'kopie.iso')));
+    assert.equal((await app.services.uploadSessions.listSessions()).length, 0);
+});
+
+test('Chunk-Upload mit "replaces" ersetzt die alte Version automatisch', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    await seedIso(app, 'projekt-v1.iso', { volumeId: 'PROJEKT_V1' });
+    const contentV2 = makeIso({ volumeId: 'PROJEKT_V2' });
+
+    const { finish, body } = await chunkedUpload(app, cookie, {
+        name: 'projekt-v2.iso', content: contentV2, replaces: 'projekt-v1.iso',
+    });
+    assert.equal(finish.status, 201);
+    assert.equal(body.filename, 'projekt-v2.iso');
+    assert.equal(body.replaced, 'projekt-v1.iso');
+
+    await assert.rejects(fsp.access(path.join(app.uploadsDir, 'projekt-v1.iso')));
+    assert.equal(await app.services.metadata.read('projekt-v1.iso'), null);
+    const written = await fsp.readFile(path.join(app.uploadsDir, 'projekt-v2.iso'));
+    assert.ok(written.equals(contentV2));
+
+    const entries = await app.services.auditLog.read({ limit: 10 });
+    assert.ok(entries.some(e => e.event === 'upload_replaced' && e.replaces === 'projekt-v1.iso'));
+});
+
+test('"replaces" bewahrt ein Duplikat unter dem alten Namen vor der Ablehnung', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const content = await seedIso(app, 'umbenannt-alt.iso', { volumeId: 'RENAME' });
+
+    // Gleicher Inhalt, neuer Name, aber explizit als Ersatz der alten Datei
+    // markiert — kein Duplikat, sondern eine reine Umbenennung.
+    const { finish, body } = await chunkedUpload(app, cookie, {
+        name: 'umbenannt-neu.iso', content, replaces: 'umbenannt-alt.iso',
+    });
+    assert.equal(finish.status, 201);
+    assert.equal(body.replaced, 'umbenannt-alt.iso');
+    await assert.rejects(fsp.access(path.join(app.uploadsDir, 'umbenannt-alt.iso')));
+});
+
+test('Multipart-Fallback: Dedup und "replaces" gelten genauso', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const content = await seedIso(app, 'fallback-original.iso', { volumeId: 'FB_DUP' });
+
+    const dupForm = new FormData();
+    dupForm.append('file', new Blob([content]), 'fallback-kopie.iso');
+    const dupRes = await fetch(app.url('/upload'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+        body: dupForm,
+    });
+    assert.equal(dupRes.status, 409);
+    await assert.rejects(fsp.access(path.join(app.uploadsDir, 'fallback-kopie.iso')));
+
+    const newContent = makeIso({ volumeId: 'FB_V2' });
+    const replaceForm = new FormData();
+    replaceForm.append('file', new Blob([newContent]), 'fallback-v2.iso');
+    replaceForm.append('replaces', 'fallback-original.iso');
+    const replaceRes = await fetch(app.url('/upload'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+        body: replaceForm,
+    });
+    assert.equal(replaceRes.status, 201);
+    const body = await replaceRes.json();
+    assert.equal(body.replaced, 'fallback-original.iso');
+    await assert.rejects(fsp.access(path.join(app.uploadsDir, 'fallback-original.iso')));
 });
 
 /* ================================================= Upload ohne JavaScript */
@@ -1134,7 +1496,6 @@ test('POST /download-zip liefert ein ZIP mit den ausgewaehlten Dateien und zaehl
     assert.ok(body.includes(Buffer.from('b.iso')));
     assert.ok(body.length > contentA.length + contentB.length);
 
-    await app.services.metadata.flush();
     assert.equal((await app.services.metadata.read('a.iso')).downloads, 1);
     assert.equal((await app.services.metadata.read('b.iso')).downloads, 1);
 });
@@ -1186,6 +1547,22 @@ test('POST /delete-bulk loescht mehrere Dateien und ignoriert ungueltige Namen',
 
     const remaining = (await fsp.readdir(app.uploadsDir)).filter(name => name.endsWith('.iso'));
     assert.deepEqual(remaining, ['c.iso']);
+});
+
+test('POST /delete-bulk fuehrt einen gueltig benannten, aber nicht existierenden Namen nicht als geloescht auf', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    await seedIso(app, 'a.iso');
+
+    const res = await fetch(app.url('/delete-bulk'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ names: ['a.iso', 'existiert-nicht.iso'] }),
+    });
+    assert.equal(res.status, 200);
+    const { deleted } = await res.json();
+    assert.deepEqual(deleted, ['a.iso'], 'eine nie vorhandene Datei darf nicht als geloescht gemeldet werden');
 });
 
 test('POST /delete-bulk ohne Sitzung wird abgewiesen', async t => {
@@ -1290,7 +1667,6 @@ test('/metrics liefert Prometheus-Textformat mit Datei- und Aktivitaets-Zaehlern
 
     const content = await seedIso(app, 'metrics.iso');
     await fetch(app.url('/download/metrics.iso'));
-    await app.services.metadata.flush();
 
     await fetch(app.url('/login'), {
         method: 'POST',
@@ -1334,4 +1710,254 @@ test('unbekannte Route liefert 404 ohne Stacktrace', async t => {
     const body = await res.text();
     assert.equal(body, 'Nicht gefunden');
     assert.doesNotMatch(body, /at .*\.js:\d+/);
+});
+
+/* ================================================================ /api/v1 */
+
+async function createApiToken(app, cookie, scopes = ['read', 'write']) {
+    const res = await fetch(app.url('/admin/api-tokens'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'Test-Token', scopes }),
+    });
+    assert.equal(res.status, 201);
+    return res.json();
+}
+
+test('GET /api/v1/files ist oeffentlich, paginiert und filtert per q/tag', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'debian.iso', { platformIds: [], volumeId: '' });
+    await app.services.metadata.update('debian.iso', { tags: ['Linux'] });
+    await seedIso(app, 'windows.iso', { platformIds: [], volumeId: '' });
+
+    const page = await fetch(app.url('/api/v1/files?perPage=1&page=1'));
+    assert.equal(page.status, 200);
+    const pageBody = await page.json();
+    assert.equal(pageBody.data.length, 1);
+    assert.deepEqual(pageBody.meta, { page: 1, perPage: 1, total: 2, totalPages: 2 });
+
+    const byTag = await fetch(app.url('/api/v1/files?tag=linux'));
+    const byTagBody = await byTag.json();
+    assert.deepEqual(byTagBody.data.map(f => f.name), ['debian.iso']);
+
+    const byQuery = await fetch(app.url('/api/v1/files?q=windows'));
+    assert.deepEqual((await byQuery.json()).data.map(f => f.name), ['windows.iso']);
+});
+
+test('GET /api/v1/files/:name liefert eine Datei oder 404', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'found.iso');
+
+    const found = await fetch(app.url('/api/v1/files/found.iso'));
+    assert.equal(found.status, 200);
+    assert.equal((await found.json()).data.name, 'found.iso');
+
+    const missing = await fetch(app.url('/api/v1/files/missing.iso'));
+    assert.equal(missing.status, 404);
+    assert.equal((await missing.json()).code, 'not_found');
+
+    const invalid = await fetch(app.url('/api/v1/files/..%2Fevil.iso'));
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).code, 'invalid_name');
+});
+
+test('GET /api/v1/tags und /api/v1/checksums sind oeffentlich', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'a.iso', { platformIds: [], volumeId: '' });
+    await app.services.metadata.update('a.iso', { tags: ['Linux'] });
+
+    const tags = await fetch(app.url('/api/v1/tags'));
+    assert.deepEqual((await tags.json()).data, ['Linux']);
+
+    const checksums = await fetch(app.url('/api/v1/checksums'));
+    const checksumBody = await checksums.json();
+    assert.equal(checksumBody.data.length, 1);
+    assert.equal(checksumBody.data[0].name, 'a.iso');
+    assert.ok(checksumBody.data[0].sha256);
+});
+
+test('Schreibende /api/v1-Routen verlangen ein Bearer-Token mit passendem Scope', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    await seedIso(app, 'a.iso');
+    const { cookie } = await app.login();
+    const readOnly = await createApiToken(app, cookie, ['read']);
+
+    const noToken = await fetch(app.url('/api/v1/files/a.iso'), { method: 'DELETE' });
+    assert.equal(noToken.status, 401);
+    assert.equal((await noToken.json()).code, 'missing_token');
+
+    const badToken = await fetch(app.url('/api/v1/files/a.iso'), {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer iso_nichtvorhanden' },
+    });
+    assert.equal(badToken.status, 401);
+    assert.equal((await badToken.json()).code, 'invalid_token');
+
+    const wrongScope = await fetch(app.url('/api/v1/files/a.iso'), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${readOnly.token}` },
+    });
+    assert.equal(wrongScope.status, 403);
+    assert.equal((await wrongScope.json()).code, 'insufficient_scope');
+
+    // Nur Session-Cookies duerfen /api/v1 niemals autorisieren — ein Cross-
+    // Site-Request mit dem Opfer-Cookie im Gepaeck, aber ohne gueltigen
+    // Bearer-Header, muss trotz der CSRF-Ausnahme fuer /api/v1 abgelehnt werden.
+    const cookieOnly = await fetch(app.url('/api/v1/files/a.iso'), {
+        method: 'DELETE',
+        headers: { Cookie: cookie },
+    });
+    assert.equal(cookieOnly.status, 401);
+    assert.ok((await fsp.readdir(app.uploadsDir)).includes('a.iso'));
+});
+
+test('vollstaendiger Upload-Zyklus ueber /api/v1/uploads mit einem write-Token', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    const token = (await createApiToken(app, cookie, ['write'])).token;
+    const auth = { Authorization: `Bearer ${token}` };
+    const content = makeIso({ volumeId: 'API_TOKEN_TEST' });
+
+    const init = await fetch(app.url('/api/v1/uploads'), {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'api-upload.iso', size: content.length }),
+    });
+    assert.equal(init.status, 201);
+    const session = (await init.json()).data;
+
+    const patch = await fetch(app.url(`/api/v1/uploads/${session.id}`), {
+        method: 'PATCH',
+        headers: { ...auth, 'Content-Type': 'application/octet-stream', 'Upload-Offset': '0' },
+        body: content,
+    });
+    assert.equal(patch.status, 200);
+    assert.equal((await patch.json()).data.complete, true);
+
+    const finish = await fetch(app.url(`/api/v1/uploads/${session.id}/finish`), {
+        method: 'POST',
+        headers: auth,
+    });
+    assert.equal(finish.status, 201);
+    assert.equal((await finish.json()).data.filename, 'api-upload.iso');
+    assert.ok((await fsp.readdir(app.uploadsDir)).includes('api-upload.iso'));
+
+    await app.services.hashQueue.whenIdle();
+    const meta = await app.services.metadata.read('api-upload.iso');
+    assert.equal(meta.iso.volumeId, 'API_TOKEN_TEST');
+});
+
+test('DELETE /api/v1/files/:name, bulk-delete und Tag-Entfernung mit write-Token', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    const token = (await createApiToken(app, cookie, ['write'])).token;
+    const auth = { Authorization: `Bearer ${token}` };
+
+    await seedIso(app, 'single.iso');
+    await seedIso(app, 'bulk-a.iso');
+    await seedIso(app, 'bulk-b.iso', { platformIds: [], volumeId: '' });
+    await app.services.metadata.update('bulk-b.iso', { tags: ['Custom'] });
+
+    const del = await fetch(app.url('/api/v1/files/single.iso'), { method: 'DELETE', headers: auth });
+    assert.equal(del.status, 204);
+    assert.ok(!(await fsp.readdir(app.uploadsDir)).includes('single.iso'));
+
+    const bulk = await fetch(app.url('/api/v1/files/bulk-delete'), {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: ['bulk-a.iso', '../evil.iso'] }),
+    });
+    assert.equal(bulk.status, 200);
+    assert.deepEqual((await bulk.json()).data.deleted, ['bulk-a.iso']);
+
+    const untag = await fetch(app.url('/api/v1/files/bulk-b.iso/tags/custom'), {
+        method: 'DELETE',
+        headers: auth,
+    });
+    assert.equal(untag.status, 200);
+    assert.deepEqual((await untag.json()).data.tags, []);
+});
+
+test('DELETE /api/v1/files/:name liefert 404 fuer einen gueltig benannten, aber nicht existierenden Namen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    const token = (await createApiToken(app, cookie, ['write'])).token;
+
+    const res = await fetch(app.url('/api/v1/files/existiert-nicht.iso'), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 404);
+    assert.equal((await res.json()).code, 'not_found');
+});
+
+test('GET /api/v1/audit-log verlangt ein Token mit read-Scope', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    const token = (await createApiToken(app, cookie, ['read'])).token;
+
+    const noAuth = await fetch(app.url('/api/v1/audit-log'));
+    assert.equal(noAuth.status, 401);
+
+    const res = await fetch(app.url('/api/v1/audit-log?perPage=5'), {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.data));
+    assert.ok(body.data.some(entry => entry.event === 'api_token_created'));
+});
+
+test('/admin/api-tokens: nur mit Sitzung erreichbar, Token wird nach Widerruf ungueltig', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const noSession = await fetch(app.url('/admin/api-tokens'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ label: 'x', scopes: ['read'] }),
+    });
+    assert.equal(noSession.status, 401);
+
+    const created = await createApiToken(app, cookie, ['read']);
+    assert.match(created.token, /^iso_/);
+
+    const list = await fetch(app.url('/admin/api-tokens'), { headers: { Cookie: cookie } });
+    const tokens = await list.json();
+    assert.equal(tokens.length, 1);
+    assert.equal(tokens[0].token, undefined, 'Klartext-Token darf in der Liste nie auftauchen');
+
+    const before = await fetch(app.url('/api/v1/tags'), {
+        headers: { Authorization: `Bearer ${created.token}` },
+    });
+    assert.equal(before.status, 200);
+
+    const revoke = await fetch(app.url(`/admin/api-tokens/${created.id}`), {
+        method: 'DELETE',
+        headers: { Cookie: cookie },
+    });
+    assert.equal(revoke.status, 204);
+
+    const after = await fetch(app.url('/api/v1/audit-log'), {
+        headers: { Authorization: `Bearer ${created.token}` },
+    });
+    assert.equal(after.status, 401);
+});
+
+test('unbekannte /api/v1-Route liefert JSON-404 statt Plaintext', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const res = await fetch(app.url('/api/v1/gibt-es-nicht'));
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Nicht gefunden.', code: 'not_found' });
 });

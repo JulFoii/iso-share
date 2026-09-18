@@ -215,33 +215,51 @@
         });
     });
 
+    var deleteDialog = document.getElementById("passkeyDeleteDialog");
+    var deleteConfirm = document.getElementById("passkeyDeleteConfirm");
+    var pendingDeleteId = null;
+
     document.addEventListener("click", function (event) {
       var button = event.target.closest("[data-passkey-delete]");
-      if (!button) return;
-      if (!window.confirm("Diesen Passkey wirklich entfernen?")) return;
-
-      fetch("/webauthn/credentials/" + encodeURIComponent(button.dataset.passkeyDelete), {
-        method: "DELETE",
-      }).then(function (res) {
-        if (!res.ok) {
-          notify("Passkey konnte nicht entfernt werden.", "error");
-          return;
-        }
-        var row = button.closest("[data-passkey-id]");
-        if (row) row.remove();
-        if (!list.querySelector("[data-passkey-id]")) {
-          var empty = document.createElement("li");
-          empty.className = "empty";
-          empty.setAttribute("data-passkey-empty", "");
-          empty.innerHTML =
-            '<p class="empty__title">Keine Passkeys</p>' +
-            '<p class="empty__text">Füge einen Passkey hinzu, um dich künftig ohne Passwort anzumelden.</p>';
-          list.appendChild(empty);
-        }
-        notify("Passkey entfernt.", "success");
-      }).catch(function () {
-        notify("Netzwerkfehler.", "error");
-      });
+      if (!button || !deleteDialog) return;
+      pendingDeleteId = button.dataset.passkeyDelete;
+      deleteDialog.showModal();
     });
+
+    if (deleteDialog && deleteConfirm) {
+      deleteConfirm.addEventListener("click", function () {
+        if (!pendingDeleteId) return;
+        var id = pendingDeleteId;
+        deleteConfirm.disabled = true;
+
+        fetch("/webauthn/credentials/" + encodeURIComponent(id), {
+          method: "DELETE",
+        }).then(function (res) {
+          deleteDialog.close();
+          if (!res.ok) {
+            notify("Passkey konnte nicht entfernt werden.", "error");
+            return;
+          }
+          var row = list.querySelector('[data-passkey-id="' + id + '"]');
+          if (row) row.remove();
+          if (!list.querySelector("[data-passkey-id]")) {
+            var empty = document.createElement("li");
+            empty.className = "empty";
+            empty.setAttribute("data-passkey-empty", "");
+            empty.innerHTML =
+              '<p class="empty__title">Keine Passkeys</p>' +
+              '<p class="empty__text">Füge einen Passkey hinzu, um dich künftig ohne Passwort anzumelden.</p>';
+            list.appendChild(empty);
+          }
+          notify("Passkey entfernt.", "success");
+        }).catch(function () {
+          deleteDialog.close();
+          notify("Netzwerkfehler.", "error");
+        }).finally(function () {
+          deleteConfirm.disabled = false;
+          pendingDeleteId = null;
+        });
+      });
+    }
   })();
 })();

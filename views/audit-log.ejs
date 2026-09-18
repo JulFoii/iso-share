@@ -4,7 +4,7 @@
   <%- include('partials/head', { title: 'Audit-Log' }) %>
   <meta name="robots" content="noindex">
 </head>
-<body>
+<body data-heartbeat="admin">
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <%- include('partials/navbar', { page: 'admin', loggedIn: true }) %>
 
@@ -41,10 +41,10 @@
                 <th scope="col">Details</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="auditLogBody">
               <% entries.forEach(entry => { %>
-                <% const { ts, event, ip, ...rest } = entry; %>
-                <tr>
+                <% const { id, ts, event, ip, ...rest } = entry; %>
+                <tr data-audit-id="<%= id %>">
                   <td class="table__num" data-label="Zeitpunkt">
                     <time datetime="<%= new Date(ts).toISOString() %>"><%= formatDate(ts) %> <%= new Date(ts).toLocaleTimeString('de-DE') %></time>
                   </td>
@@ -66,5 +66,7 @@
 <%- include('partials/footer') %>
 
 <script src="/js/theme.js" defer></script>
+<script src="/js/idle-timer.js" defer></script>
+<script src="/js/heartbeat.js" defer></script>
 </body>
 </html>

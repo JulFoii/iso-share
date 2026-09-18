@@ -1,14 +1,21 @@
 <%
 /*
  * Eine Datei = zwei <tr>: die Zeile selbst und eine ausklappbare Detailzeile.
- * Beide werden von index.ejs und admin.ejs genutzt, `admin` schaltet nur die
- * Loeschen-Aktion dazu.
+ * Beide werden von index.ejs und admin.ejs (ueber partials/file-rows) genutzt,
+ * `admin` schaltet nur die Loeschen-Aktion dazu.
  *
  * Ohne JavaScript bleibt die Detailzeile per [hidden] zu und der Umschalter
  * ist nutzlos — deshalb steht die Checksumme zusaetzlich unter /checksums als
  * SHA256SUMS bereit.
+ *
+ * Das Zeile/Detailzeile-Paar wird ueber den Dateinamen verschluesselt
+ * (encodeURIComponent, damit z. B. Leerzeichen einen gueltigen id-Wert
+ * ergeben) statt ueber die Position in der Liste — public/js/heartbeat.js
+ * muss einzelne Zeilen anhand des Namens gezielt ersetzen/einfuegen/entfernen
+ * koennen, ohne dass sich vorhandene Zeilen beim naechsten Poll verschieben.
  */
-const detailId = `file-detail-${index}`;
+const rowKey = encodeURIComponent(file.name);
+const detailId = `file-detail-${rowKey}`;
 const HASH_LABELS = {
   hashing: 'wird berechnet …',
   queued: 'in der Warteschlange',
@@ -17,7 +24,7 @@ const HASH_LABELS = {
 const tags = file.tags || [];
 const searchBase = admin ? '/admin-search' : '/search';
 %>
-<tr data-search="<%= [file.name].concat(tags).join(' ') %>" data-row="<%= index %>">
+<tr data-search="<%= [file.name].concat(tags).join(' ') %>" data-row="<%= rowKey %>">
   <td class="table__select" data-label="">
     <input type="checkbox" data-select-file value="<%= file.name %>" aria-label="<%= file.name %> auswählen">
   </td>
@@ -77,7 +84,7 @@ const searchBase = admin ? '/admin-search' : '/search';
   </td>
 </tr>
 
-<tr class="table__detail" id="<%= detailId %>" data-detail-for="<%= index %>" hidden>
+<tr class="table__detail" id="<%= detailId %>" data-detail-for="<%= rowKey %>" hidden>
   <td colspan="5">
     <dl class="details">
       <div class="details__item details__item--wide">
