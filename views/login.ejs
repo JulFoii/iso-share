@@ -34,6 +34,18 @@
 
         <form class="stack" action="/login" method="POST">
           <div class="field">
+            <label class="label" for="username">Benutzername</label>
+            <input
+              class="input"
+              type="text"
+              id="username"
+              name="username"
+              autocomplete="username"
+              required
+              autofocus>
+          </div>
+
+          <div class="field">
             <label class="label" for="password">Passwort</label>
             <div class="password">
               <input
@@ -42,8 +54,7 @@
                 id="password"
                 name="password"
                 autocomplete="current-password"
-                required
-                autofocus>
+                required>
               <button
                 type="button"
                 class="password__toggle"
@@ -64,6 +75,10 @@
 
           <button type="submit" class="btn btn--primary btn--block">Anmelden</button>
         </form>
+
+        <button type="button" id="passkeyLoginButton" class="btn btn--secondary btn--block mt-4" hidden>
+          Mit Passkey anmelden
+        </button>
       </div>
     </div>
 
@@ -76,6 +91,8 @@
 <%- include('partials/footer') %>
 
 <script src="/js/theme.js" defer></script>
+<script src="/js/toast.js" defer></script>
 <script src="/js/password-toggle.js" defer></script>
+<script src="/js/webauthn.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+<li class="row row--between" data-passkey-id="<%= passkey.credentialId %>">
+  <span>
+    <%= passkey.label %>
+    <span class="hint">— hinzugefügt <%= formatDate(passkey.createdAt) %></span>
+  </span>
+  <button
+    type="button"
+    class="btn btn--danger-ghost btn--sm"
+    data-passkey-delete="<%= passkey.credentialId %>">
+    Entfernen
+  </button>
+</li>

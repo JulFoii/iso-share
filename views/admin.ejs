@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head', { title: 'Verwaltung' }) %>
 </head>
-<body>
+<body data-heartbeat="admin">
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <%- include('partials/navbar', { page: 'admin', loggedIn: true }) %>
 
@@ -13,16 +13,43 @@
       <h1 class="page-header__title">Verwaltung</h1>
       <p class="page-header__meta">
         <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
-        <span><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <span data-total-size><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
+        <% if (files.length > 0) { %>
+          <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
+        <% } %>
       </p>
     </header>
 
-    <div class="stack">
+    <nav class="tabs" aria-label="Verwaltungsbereiche" data-tabs>
+      <a class="tab" href="#tab-files" data-tab-link="files" aria-current="page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        Dateien
+      </a>
+      <a class="tab" href="#tab-security" data-tab-link="security">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Sicherheit
+      </a>
+      <a class="tab" href="#tab-account" data-tab-link="account">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M4 21c0-4 4-7 8-7s8 3 8 7"/>
+        </svg>
+        Konto
+      </a>
+    </nav>
+
+    <div class="stack" id="tab-files" data-tab-panel="files">
       <!-- Upload -->
       <section class="card reveal" aria-labelledby="upload-heading">
         <div class="card__header">
           <h2 class="card__title" id="upload-heading">Image hochladen</h2>
           <span class="badge spacer">.iso</span>
+          <span class="badge">max <%= formatSize(maxFileSizeMb * 1024 * 1024) %></span>
         </div>
         <div class="card__body">
           <form id="uploadForm" class="stack" enctype="multipart/form-data" method="POST" action="/upload">
@@ -47,6 +74,32 @@
               <span class="badge file-preview__size" id="filePreviewSize"></span>
             </div>
 
+            <% if (files.length > 0) { %>
+              <div class="field">
+                <label class="label" for="uploadReplaces">Ersetzt vorhandene Datei (optional)</label>
+                <select class="input" id="uploadReplaces" name="replaces">
+                  <option value="">— keine, als neue Datei hochladen —</option>
+                  <% files.forEach(file => { %>
+                    <option value="<%= file.name %>"><%= file.name %></option>
+                  <% }) %>
+                </select>
+                <span class="hint">
+                  Nützlich bei einer neueren Version unter anderem Namen — die
+                  gewählte Datei wird nach erfolgreichem Upload automatisch gelöscht.
+                </span>
+              </div>
+            <% } %>
+
+            <!-- Wird von upload.js gefuellt, wenn der Server zu dieser Datei
+                 noch eine offene Upload-Sitzung hat. -->
+            <div class="alert alert--info" id="uploadResume" hidden>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4M12 8h.01"/>
+              </svg>
+              <span id="uploadResumeText"></span>
+            </div>
+
             <div class="progress" id="uploadProgress" hidden>
               <div class="progress__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload-Fortschritt">
                 <div class="progress__bar" id="uploadProgressBar"></div>
@@ -59,7 +112,14 @@
 
             <div class="row">
               <button type="submit" class="btn btn--primary" id="uploadSubmit" disabled>Hochladen</button>
-              <span class="hint">Bestehende Dateien mit gleichem Namen werden überschrieben.</span>
+              <button type="button" class="btn btn--secondary" id="uploadPause" hidden>Pause</button>
+              <button type="button" class="btn btn--danger-ghost" id="uploadCancel" hidden>Abbrechen</button>
+              <span class="hint">
+                Große Images werden in Blöcken übertragen und lassen sich nach
+                einem Abbruch fortsetzen. Bestehende Dateien mit gleichem Namen
+                werden überschrieben, inhaltsgleiche Dateien unter anderem
+                Namen abgelehnt.
+              </span>
             </div>
           </form>
         </div>
@@ -84,7 +144,7 @@
           </div>
         <% } else { %>
           <div class="card__toolbar">
-            <form class="search" action="/admin-search" method="GET" role="search">
+            <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/admin-search" method="GET" role="search">
               <svg class="search__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"/>
                 <path d="m20 20-3.5-3.5"/>
@@ -96,16 +156,34 @@
                 id="search"
                 name="q"
                 data-filter
-                placeholder="Filtern… (/)"
+                placeholder="Filtern nach Name, Tag, Label… (/)"
                 autocomplete="off"
                 value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+              <% if (typeof searchQuery !== 'undefined' && searchQuery) { %>
+                <a class="search__reset" href="/admin-upload" aria-label="Suche zurücksetzen" title="Suche zurücksetzen">×</a>
+              <% } %>
             </form>
+          </div>
+          <div data-tag-filter>
+            <%- include('partials/tag-filter-panel', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/admin-search' }) %>
+          </div>
+
+          <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
+            <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
+            <div class="bulk-bar__actions">
+              <button type="button" class="btn btn--secondary btn--sm" data-bulk-zip>Als ZIP herunterladen</button>
+              <button type="button" class="btn btn--danger-ghost btn--sm" data-bulk-delete>Löschen</button>
+              <button type="button" class="btn btn--ghost btn--sm" data-bulk-clear>Auswahl aufheben</button>
+            </div>
           </div>
 
           <div class="table-scroll">
             <table class="table" data-filetable>
               <thead>
                 <tr>
+                  <th scope="col" class="table__select">
+                    <input type="checkbox" data-select-all aria-label="Alle auswählen">
+                  </th>
                   <th scope="col">
                     <button type="button" class="table__sort" data-sort-type="text">
                       Name
@@ -127,33 +205,8 @@
                   <th scope="col"><span class="visually-hidden">Aktionen</span></th>
                 </tr>
               </thead>
-              <tbody>
-                <% files.forEach(file => { %>
-                  <tr data-search="<%= file.name %>">
-                    <td class="table__name" data-label="Name"><%= file.name %></td>
-                    <td class="table__num" data-label="Größe" data-value="<%= file.size %>"><%= formatSize(file.size) %></td>
-                    <td class="table__num" data-label="Hochgeladen" data-value="<%= file.mtime %>">
-                      <time datetime="<%= new Date(file.mtime).toISOString() %>"><%= formatDate(file.mtime) %></time>
-                    </td>
-                    <td class="table__actions" data-label="">
-                      <span class="table__row-actions">
-                        <a class="btn btn--ghost btn--sm" href="/download/<%= encodeURIComponent(file.name) %>" download>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
-                          </svg>
-                          <span class="visually-hidden">Herunterladen: <%= file.name %></span>
-                        </a>
-                        <button type="button" class="btn btn--danger-ghost btn--sm" data-delete="<%= file.name %>">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M4 7h16M10 11v6M14 11v6"/>
-                            <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                          </svg>
-                          <span class="visually-hidden">Löschen: <%= file.name %></span>
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
-                <% }); %>
+              <tbody data-file-rows>
+                <%- include('partials/file-rows', { files, admin: true }) %>
               </tbody>
             </table>
           </div>
@@ -171,10 +224,394 @@
         <% } %>
       </section>
     </div>
+
+    <div class="stack" id="tab-security" data-tab-panel="security">
+      <!-- Passkeys -->
+      <section class="card reveal" aria-labelledby="passkeys-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="passkeys-heading">Passkeys</h2>
+        </div>
+        <div class="card__body">
+          <ul class="stack" id="passkeyList">
+            <%- include('partials/passkey-rows', { passkeys }) %>
+            <% if (passkeys.length === 0) { %>
+              <li class="empty" data-passkey-empty>
+                <p class="empty__title">Keine Passkeys</p>
+                <p class="empty__text">Füge einen Passkey hinzu, um dich künftig ohne Passwort anzumelden.</p>
+              </li>
+            <% } %>
+          </ul>
+          <div class="row mt-4">
+            <button type="button" class="btn btn--secondary" id="passkeyAddButton" hidden>Passkey hinzufügen</button>
+            <span class="hint" id="passkeyUnsupportedHint">Dieser Browser unterstützt keine Passkeys.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- API-Tokens -->
+      <section class="card reveal" aria-labelledby="api-tokens-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="api-tokens-heading">API-Tokens</h2>
+          <a class="btn btn--ghost btn--sm" href="/openapi.json" target="_blank" rel="noopener">API-Dokumentation</a>
+        </div>
+        <div class="card__body">
+          <p class="hint mb-4">
+            Zugriff auf <code class="mono">/api/v1</code> für Skripte und CI, unabhängig
+            von der Sitzung — per <code class="mono">Authorization: Bearer &lt;token&gt;</code>.
+          </p>
+          <ul class="stack" id="apiTokenList">
+            <%- include('partials/token-rows', { apiTokens }) %>
+            <% if (apiTokens.length === 0) { %>
+              <li class="empty" data-token-empty>
+                <p class="empty__title">Keine API-Tokens</p>
+                <p class="empty__text">Erstelle ein Token, um Dateien per Skript hoch-/herunterzuladen oder zu verwalten.</p>
+              </li>
+            <% } %>
+          </ul>
+          <div class="row mt-4">
+            <button type="button" class="btn btn--secondary" id="apiTokenAddButton">Token erstellen</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Zwei-Faktor (TOTP) -->
+      <section class="card reveal" aria-labelledby="totp-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="totp-heading">Zwei-Faktor-Authentifizierung</h2>
+          <span class="badge <%= totpEnabled ? 'badge--ok' : '' %>" id="totpStatusBadge"><%= totpEnabled ? 'Aktiv' : 'Inaktiv' %></span>
+        </div>
+        <div class="card__body">
+          <p class="hint mb-4">
+            Zusätzlicher Code aus einer Authenticator-App beim Passwort-Login.
+            Gilt nicht für die Anmeldung per Passkey — die zählt schon als
+            gleichwertig starker Faktor.
+          </p>
+          <div class="row">
+            <button type="button" class="btn btn--secondary" id="totpSetupButton" <%= totpEnabled ? 'hidden' : '' %>>TOTP einrichten</button>
+            <button type="button" class="btn btn--danger-ghost" id="totpDisableButton" <%= totpEnabled ? '' : 'hidden' %>>Deaktivieren</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Audit-Log -->
+      <section class="card reveal" aria-labelledby="audit-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="audit-heading">Audit-Log</h2>
+          <a class="btn btn--ghost btn--sm" href="/admin-audit-log">Alle ansehen</a>
+        </div>
+        <div class="card__body">
+          <p class="hint" id="auditWidgetEmpty" <%= auditEntries.length > 0 ? 'hidden' : '' %>>Noch keine Einträge.</p>
+          <ul class="stack" id="auditWidgetList" <%= auditEntries.length > 0 ? '' : 'hidden' %>>
+            <% auditEntries.slice(0, 8).forEach(entry => { %>
+              <li class="row row--between" data-audit-id="<%= entry.id %>">
+                <span><span class="badge badge--mono"><%= entry.event %></span> <span class="hint"><%= entry.ip || '' %></span></span>
+                <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= new Date(entry.ts).toLocaleTimeString('de-DE') %></time>
+              </li>
+            <% }); %>
+          </ul>
+        </div>
+      </section>
+    </div>
+
+    <div class="stack" id="tab-account" data-tab-panel="account">
+      <!-- Admin-Benutzername -->
+      <section class="card reveal" aria-labelledby="username-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="username-heading">Admin-Benutzername</h2>
+        </div>
+        <div class="card__body">
+          <% if (usernameError) { %>
+            <div class="alert alert--danger mb-4" role="alert">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span><%= usernameError %></span>
+            </div>
+          <% } %>
+
+          <form class="stack" id="usernameForm" method="POST" action="/admin-username">
+            <div class="field">
+              <label class="label" for="usernameInput">Benutzername</label>
+              <input
+                class="input"
+                type="text"
+                id="usernameInput"
+                name="username"
+                value="<%= currentUsername %>"
+                maxlength="64"
+                required>
+            </div>
+
+            <div class="row">
+              <button type="submit" class="btn btn--secondary">Benutzername ändern</button>
+              <span class="hint">Gilt sofort für neue Anmeldungen; bestehende Sitzungen bleiben angemeldet.</span>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Admin-Passwort -->
+      <section class="card reveal" aria-labelledby="password-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="password-heading">Admin-Passwort</h2>
+        </div>
+        <div class="card__body">
+          <% if (passwordError) { %>
+            <div class="alert alert--danger mb-4" role="alert">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span><%= passwordError %></span>
+            </div>
+          <% } %>
+
+          <form class="stack" id="passwordForm" method="POST" action="/admin-password">
+            <div class="field">
+              <label class="label" for="newPassword">Neues Passwort</label>
+              <div class="password">
+                <input
+                  class="input"
+                  type="password"
+                  id="newPassword"
+                  name="password"
+                  autocomplete="new-password"
+                  minlength="8"
+                  required>
+                <button
+                  type="button"
+                  class="password__toggle"
+                  data-password-toggle="newPassword"
+                  aria-label="Passwort anzeigen">
+                  <svg data-password-icon="show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  <svg data-password-icon="hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                    <path d="M4 4l16 16"/>
+                    <path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.5 7.3A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 3.9-.8"/>
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="label" for="confirmPassword">Passwort bestätigen</label>
+              <div class="password">
+                <input
+                  class="input"
+                  type="password"
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  autocomplete="new-password"
+                  minlength="8"
+                  required>
+                <button
+                  type="button"
+                  class="password__toggle"
+                  data-password-toggle="confirmPassword"
+                  aria-label="Passwort anzeigen">
+                  <svg data-password-icon="show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                  <svg data-password-icon="hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                    <path d="M4 4l16 16"/>
+                    <path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.5 7.3A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 3.9-.8"/>
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="row">
+              <button type="submit" class="btn btn--secondary">Passwort ändern</button>
+              <span class="hint">Gilt sofort für neue Anmeldungen; bestehende Sitzungen bleiben angemeldet.</span>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
   </div>
 </main>
 
 <%- include('partials/footer') %>
+
+<dialog class="dialog" id="passkeyDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Passkey entfernen?</h2>
+      <p class="dialog__text">
+        Mit diesem Passkey ist danach keine Anmeldung mehr möglich.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="passkeyDeleteConfirm">Entfernen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="usernameResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title" data-result-title>Benutzername geändert</h2>
+      <p class="dialog__text" data-result-text></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="passwordResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title" data-result-title>Passwort geändert</h2>
+      <p class="dialog__text" data-result-text></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="totpSetupDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">TOTP einrichten</h2>
+      <p class="dialog__text">
+        In einer Authenticator-App (z. B. Aegis, Google Authenticator) als
+        Setup-Schlüssel eintragen — es gibt bewusst keinen QR-Code, jede App
+        akzeptiert die manuelle Eingabe.
+      </p>
+      <div class="field">
+        <label class="label">Setup-Schlüssel</label>
+        <div class="row">
+          <code class="mono" id="totpSecretDisplay"></code>
+          <button type="button" class="btn btn--ghost btn--sm" id="totpSecretCopy" data-copy-label="Schlüssel kopiert">Kopieren</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label" for="totpToken">Code aus der App</label>
+        <input class="input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="totpToken" autocomplete="one-time-code">
+      </div>
+      <p class="hint" id="totpSetupError"></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--primary" id="totpSetupConfirm">Bestätigen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="totpRecoveryDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Wiederherstellungscodes</h2>
+      <p class="dialog__text">
+        Jeder Code funktioniert einmal, falls das Gerät mit der
+        Authenticator-App verloren geht. Jetzt sichern — sie werden nicht
+        erneut angezeigt.
+      </p>
+      <ul class="stack mono" id="totpRecoveryList"></ul>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">Codes gesichert</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="totpDisableDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Zwei-Faktor-Authentifizierung deaktivieren?</h2>
+      <p class="dialog__text">
+        Die Anmeldung ist danach wieder nur mit Passwort (bzw. Passkey) möglich.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="totpDisableConfirm">Deaktivieren</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="apiTokenCreateDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">API-Token erstellen</h2>
+      <div class="field">
+        <label class="label" for="apiTokenLabel">Bezeichnung (optional)</label>
+        <input class="input" type="text" id="apiTokenLabel" maxlength="64" placeholder="z. B. CI-Pipeline">
+      </div>
+      <div class="field">
+        <label class="label">Berechtigungen</label>
+        <label class="row"><input type="checkbox" id="apiTokenScopeRead" checked> Lesen</label>
+        <label class="row"><input type="checkbox" id="apiTokenScopeWrite"> Schreiben (Upload, Löschen, Tags)</label>
+      </div>
+      <p class="hint" id="apiTokenCreateError"></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--primary" id="apiTokenCreateConfirm">Erstellen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog dialog--fit" id="apiTokenResultDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Token erstellt</h2>
+      <p class="dialog__text">
+        Wird jetzt nur einmal angezeigt — danach ist es nicht mehr abrufbar. Jetzt sichern.
+      </p>
+      <div class="field">
+        <label class="label">Token</label>
+        <div class="row">
+          <code class="mono nowrap" id="apiTokenResultValue"></code>
+          <button type="button" class="btn btn--ghost btn--sm" id="apiTokenResultCopy" data-copy-label="Token kopiert">Kopieren</button>
+        </div>
+      </div>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--primary">Gesichert</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="apiTokenDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Token widerrufen?</h2>
+      <p class="dialog__text">
+        Skripte, die es verwenden, funktionieren danach sofort nicht mehr.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="apiTokenDeleteConfirm">Widerrufen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="bulkDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Ausgewählte Dateien löschen?</h2>
+      <p class="dialog__text">
+        <strong class="mono" data-bulk-delete-list></strong>
+        werden endgültig vom Server entfernt. Das lässt sich nicht zurücknehmen.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" data-bulk-delete-confirm>Löschen</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog class="dialog" id="deleteDialog">
   <form method="POST" action="/delete">
@@ -194,9 +631,21 @@
 </dialog>
 
 <script src="/js/theme.js" defer></script>
+<script src="/js/idle-timer.js" defer></script>
 <script src="/js/toast.js" defer></script>
+<script src="/js/admin-tabs.js" defer></script>
 <script src="/js/filetable.js" defer></script>
 <script src="/js/delete-dialog.js" defer></script>
+<script src="/js/bulk-actions.js" defer></script>
+<script src="/js/row-details.js" defer></script>
+<script src="/js/copy.js" defer></script>
+<script src="/js/tags.js" defer></script>
 <script src="/js/upload.js" defer></script>
+<script src="/js/webauthn.js" defer></script>
+<script src="/js/totp.js" defer></script>
+<script src="/js/api-tokens.js" defer></script>
+<script src="/js/password-toggle.js" defer></script>
+<script src="/js/account-forms.js" defer></script>
+<script src="/js/heartbeat.js" defer></script>
 </body>
 </html>

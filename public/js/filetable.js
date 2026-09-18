@@ -4,10 +4,15 @@
  *   <table data-filetable>            Tabelle
  *   <button class="table__sort">      im <th>, sortiert dessen Spalte
  *   <td data-value="...">             Sortierschluessel (sonst textContent)
- *   <tr data-search="...">            Text, gegen den gefiltert wird
+ *   <tr data-search="..." data-row="i">   Text, gegen den gefiltert wird
+ *   <tr data-detail-for="i">          Detailzeile, gehoert zu data-row="i"
  *   <input data-filter>               Filterfeld
  *   [data-filter-empty]               Hinweis, wenn nichts uebrig bleibt
  *   [data-visible-count]              bekommt die Anzahl sichtbarer Zeilen
+ *
+ * Jede Datei belegt zwei <tr>: die Zeile und ihre ausklappbare Detailzeile.
+ * Sortieren und Filtern muessen die beiden zusammenhalten, sonst landet eine
+ * Checksumme unter der falschen Datei.
  *
  * Der Server liefert unter /search bzw. /admin-search dieselbe Ansicht, das
  * Filtern hier ist nur die schnelle Variante ohne Roundtrip.
@@ -17,9 +22,22 @@
   if (!table) return;
 
   var tbody = table.tBodies[0];
-  var rows = Array.prototype.slice.call(tbody.rows);
+  var rows = Array.prototype.slice.call(
+    tbody.querySelectorAll("tr[data-search]")
+  );
   var emptyHint = document.querySelector("[data-filter-empty]");
   var countTargets = document.querySelectorAll("[data-visible-count]");
+
+  function detailOf(row) {
+    if (row.dataset.row === undefined) return null;
+    return tbody.querySelector(
+      'tr[data-detail-for="' + row.dataset.row + '"]'
+    );
+  }
+
+  function toggleOf(row) {
+    return row.querySelector("[data-row-toggle]");
+  }
 
   /* ---------------------------------------------------------------- Sortieren */
 
@@ -31,6 +49,36 @@
     var raw = cell.dataset.value;
     if (raw === undefined) raw = cell.textContent.trim();
     return numeric ? parseFloat(raw) || 0 : raw.toLowerCase();
+  }
+
+  // Sortiert `rows` nach Spalte `index` und haengt sie (samt Detailzeile) in
+  // dieser Reihenfolge wieder an — von sortBy() (Klick) und von
+  // reapplyActiveSort() (nach einem Heartbeat-Patch) genutzt, ohne dass
+  // Letzteres dabei die Richtung umschaltet.
+  function reorder(index, numeric, factor) {
+    rows.sort(function (a, b) {
+      var va = sortValue(a, index, numeric);
+      var vb = sortValue(b, index, numeric);
+      if (va < vb) return -1 * factor;
+      if (va > vb) return 1 * factor;
+      return 0;
+    });
+
+    var fragment = document.createDocumentFragment();
+    rows.forEach(function (row) {
+      fragment.appendChild(row);
+      // Detailzeile direkt hinter ihrer Zeile mitnehmen
+      var detail = detailOf(row);
+      if (detail) fragment.appendChild(detail);
+    });
+    tbody.appendChild(fragment);
+  }
+
+  function activeSortButton() {
+    for (var i = 0; i < buttons.length; i++) {
+      if (buttons[i].dataset.sortDir) return buttons[i];
+    }
+    return null;
   }
 
   function sortBy(button) {
@@ -58,20 +106,7 @@
     button.dataset.sortDir = direction;
     th.setAttribute("aria-sort", direction);
 
-    var factor = direction === "ascending" ? 1 : -1;
-    rows.sort(function (a, b) {
-      var va = sortValue(a, index, numeric);
-      var vb = sortValue(b, index, numeric);
-      if (va < vb) return -1 * factor;
-      if (va > vb) return 1 * factor;
-      return 0;
-    });
-
-    var fragment = document.createDocumentFragment();
-    rows.forEach(function (row) {
-      fragment.appendChild(row);
-    });
-    tbody.appendChild(fragment);
+    reorder(index, numeric, direction === "ascending" ? 1 : -1);
   }
 
   for (var i = 0; i < buttons.length; i++) {
@@ -79,6 +114,22 @@
       sortBy(event.currentTarget);
     });
   }
+
+  // Der Heartbeat (public/js/heartbeat.js) ersetzt/ergaenzt Zeilen einzeln
+  // und feuert danach dieses Event auf der Tabelle, statt selbst zu wissen,
+  // wie sortiert/gefiltert wird — rows neu einlesen, eine aktive Sortierung
+  // (falls vorhanden) mit ihrer aktuellen Richtung erneut anwenden (nicht
+  // per sortBy(), das wuerde die Richtung umschalten), danach den aktuellen
+  // Filter erneut anwenden.
+  table.addEventListener("table:changed", function () {
+    rows = Array.prototype.slice.call(tbody.querySelectorAll("tr[data-search]"));
+    var active = activeSortButton();
+    if (active) {
+      var th = active.closest("th");
+      reorder(th.cellIndex, active.dataset.sortType === "number", active.dataset.sortDir === "ascending" ? 1 : -1);
+    }
+    if (input) filter();
+  });
 
   /* ------------------------------------------------------------------ Filtern */
 
@@ -94,6 +145,16 @@
       var match = query === "" || haystack.indexOf(query) !== -1;
       row.hidden = !match;
       if (match) visible++;
+
+      var detail = detailOf(row);
+      if (!detail) return;
+
+      var toggle = toggleOf(row);
+      // Eine ausgefilterte Zeile darf keine offene Detailzeile hinterlassen;
+      // eine sichtbare behaelt ihren Zustand.
+      if (!match && toggle) toggle.setAttribute("aria-expanded", "false");
+      var expanded = toggle && toggle.getAttribute("aria-expanded") === "true";
+      detail.hidden = !match || !expanded;
     });
 
     if (emptyHint) emptyHint.hidden = visible !== 0;

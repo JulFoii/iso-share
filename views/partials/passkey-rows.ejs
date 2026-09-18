@@ -1,0 +1,10 @@
+<%
+/*
+ * Nur die Schleife ueber `passkeys`, analog zu partials/file-rows — genutzt
+ * von admin.ejs und von server.js' GET /admin/partials/listing, damit beide
+ * exakt dasselbe Zeilen-Markup erzeugen.
+ */
+%>
+<% passkeys.forEach(passkey => { %>
+  <%- include('passkey-row', { passkey }) %>
+<% }); %>

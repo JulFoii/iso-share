@@ -1,0 +1,12 @@
+<%
+/*
+ * Nur die Schleife ueber `files`, ausgelagert aus index.ejs/admin.ejs, damit
+ * es genau eine Stelle gibt, die <tbody>-Inhalt fuer die Dateitabelle
+ * erzeugt — server.js' Heartbeat-Fragment-Route (GET /partials/listing bzw.
+ * /admin/partials/listing) rendert dasselbe Partial, damit das Server-Side-
+ * Render und das per Poll nachgelieferte HTML garantiert gleich aussehen.
+ */
+%>
+<% files.forEach(file => { %>
+  <%- include('file-row', { file, admin }) %>
+<% }); %>

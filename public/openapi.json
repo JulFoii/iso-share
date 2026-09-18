@@ -1,0 +1,204 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ISO Share API",
+    "version": "1.0.0",
+    "description": "Programmatischer Zugriff auf ISO Share. Lese-Endpunkte sind öffentlich (dieselben Daten wie die Startseite), schreibende Endpunkte und der Audit-Log-Endpunkt verlangen ein API-Token mit passendem Scope. Ein Token wird von einem eingeloggten Admin unter /admin-upload erstellt und ist nur einmal im Klartext sichtbar."
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "iso_<random>",
+        "description": "Authorization: Bearer <token>. Scopes: 'read' und/oder 'write', je nach Endpunkt."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "description": "Menschenlesbare, deutsche Fehlermeldung." },
+          "code": { "type": "string", "description": "Stabiler, maschinenlesbarer Fehlercode." }
+        },
+        "required": ["error", "code"]
+      },
+      "File": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "size": { "type": "integer" },
+          "mtime": { "type": "number" },
+          "downloads": { "type": "integer" },
+          "sha256": { "type": "string", "nullable": true },
+          "iso": { "type": "object", "nullable": true },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "hashStatus": { "type": "string", "enum": ["done", "hashing", "queued", "pending"] }
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "perPage": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "UploadSession": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "size": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "resumed": { "type": "boolean" },
+          "replaces": { "type": "string", "nullable": true }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/files": {
+      "get": {
+        "summary": "Dateiliste (paginiert, filterbar)",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Suchbegriff (Name oder Tag)." },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "Auf einen exakten Tag filtern." },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "perPage", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["name", "-name", "downloads", "-downloads", "size", "-size"], "default": "name" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object", "properties": {
+              "data": { "type": "array", "items": { "$ref": "#/components/schemas/File" } },
+              "meta": { "$ref": "#/components/schemas/PageMeta" }
+            } } } }
+          }
+        }
+      }
+    },
+    "/files/{name}": {
+      "get": {
+        "summary": "Eine Datei",
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/File" } } } } } },
+          "404": { "description": "Nicht gefunden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "summary": "Datei löschen",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Gelöscht" },
+          "401": { "description": "Kein/ungültiges Token" },
+          "404": { "description": "Nicht gefunden" }
+        }
+      }
+    },
+    "/files/{name}/tags/{tag}": {
+      "delete": {
+        "summary": "Einen Tag entfernen (Tags werden nur automatisch vergeben, es gibt keine Route zum Hinzufügen)",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "tag", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "object", "properties": { "tags": { "type": "array", "items": { "type": "string" } } } } } } } } }
+        }
+      }
+    },
+    "/files/bulk-delete": {
+      "post": {
+        "summary": "Mehrere Dateien löschen",
+        "security": [{ "bearerAuth": ["write"] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "names": { "type": "array", "items": { "type": "string" } } }, "required": ["names"] } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "object", "properties": { "deleted": { "type": "array", "items": { "type": "string" } } } } } } } } }
+        }
+      }
+    },
+    "/tags": {
+      "get": {
+        "summary": "Alle vorkommenden Tags",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "type": "string" } } } } } } } }
+      }
+    },
+    "/checksums": {
+      "get": {
+        "summary": "SHA-256-Checksummen aller Dateien mit aktueller Prüfsumme",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "sha256": { "type": "string" } } } } } } } } } }
+      }
+    },
+    "/audit-log": {
+      "get": {
+        "summary": "Audit-Log (paginiert)",
+        "security": [{ "bearerAuth": ["read"] }],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "perPage", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } }
+        ],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "Kein/ungültiges Token" } }
+      }
+    },
+    "/uploads": {
+      "post": {
+        "summary": "Upload-Sitzung starten",
+        "security": [{ "bearerAuth": ["write"] }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": {
+          "name": { "type": "string", "description": "Zieldateiname, muss auf .iso enden." },
+          "size": { "type": "integer", "description": "Angekündigte Gesamtgröße in Byte." },
+          "replaces": { "type": "string", "description": "Optional: Name einer bestehenden Datei, die nach Erfolg gelöscht wird." }
+        }, "required": ["name", "size"] } } } },
+        "responses": {
+          "201": { "description": "Erstellt oder fortgesetzt", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/UploadSession" } } } } } }
+        }
+      }
+    },
+    "/uploads/{id}": {
+      "get": {
+        "summary": "Stand einer Upload-Sitzung",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "patch": {
+        "summary": "Chunk anhängen",
+        "description": "Body ist application/octet-stream, kein JSON. Der Header Upload-Offset muss dem tatsächlichen Serverstand entsprechen, sonst 409 mit dem echten Offset.",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "Upload-Offset", "in": "header", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": { "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+        "responses": {
+          "200": { "description": "OK" },
+          "409": { "description": "Offset passt nicht zum Serverstand — echter Offset kommt im Body zurück." }
+        }
+      },
+      "delete": {
+        "summary": "Upload-Sitzung abbrechen",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "204": { "description": "Abgebrochen" } }
+      }
+    },
+    "/uploads/{id}/finish": {
+      "post": {
+        "summary": "Upload abschließen und die Datei nach uploads/ verschieben",
+        "security": [{ "bearerAuth": ["write"] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "201": { "description": "Erstellt", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "object", "properties": { "filename": { "type": "string" }, "replaced": { "type": "string", "nullable": true } } } } } } } },
+          "409": { "description": "Inhaltsgleiches Duplikat unter anderem Namen" }
+        }
+      }
+    }
+  }
+}

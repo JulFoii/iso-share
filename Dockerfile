@@ -1,5 +1,8 @@
 # Use official Node.js runtime as base image
-FROM node:22-alpine
+# >=22.5 fuer node:sqlite (siehe lib/db.js) — v24 ausgeliefert, damit die
+# eingebaute SQLite-API ohne --experimental-sqlite-Flag und ohne
+# ExperimentalWarning laeuft (auf v22/23 noch flag- bzw. warnungspflichtig).
+FROM node:24-alpine
 
 # Set working directory in container
 WORKDIR /app
@@ -8,13 +11,15 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copy application code
 COPY . .
 
-# Create upload directories and set permissions
-RUN mkdir -p uploads tmp-uploads && \
+# Create upload, temp and data directories and set permissions
+# data/ haelt die SQLite-Datenbank (Sitzungen, Metadaten, Zugangsdaten, ...)
+# ueber einen Neustart hinweg, siehe lib/db.js
+RUN mkdir -p uploads tmp-uploads data && \
     chown -R node:node /app
 
 # Switch to non-root user for security
@@ -25,9 +30,10 @@ ENV NODE_ENV=production
 
 EXPOSE 3000
 
-# Health check
+# /healthz statt / — der Healthcheck soll nicht alle 30 s die
+# komplette Dateiliste samt Metadaten rendern
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    CMD node -e "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Start the application
 CMD ["node", "server.js"]
