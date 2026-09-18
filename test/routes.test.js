@@ -1170,6 +1170,39 @@ test('Suche filtert serverseitig', async t => {
     assert.doesNotMatch(html, /fedora\.iso/);
 });
 
+test('Suche findet Treffer ueber ISO-Metadaten (Publisher, Volume-Label), nicht nur ueber den Dateinamen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    await seedIso(app, 'distro-a.iso', { volumeId: 'DISTRO_A', publisher: 'ACME LINUX PROJECT' });
+    await seedIso(app, 'distro-b.iso', { volumeId: 'DISTRO_B', publisher: 'OTHER PUBLISHER' });
+
+    // Weder "acme" noch "distro_a" stecken im Dateinamen — der Treffer kann
+    // also nur aus den iso9660-Feldern kommen (siehe isoSearchText() in
+    // server.js).
+    const byPublisher = await (await fetch(app.url('/search?q=acme'))).text();
+    assert.match(byPublisher, /distro-a\.iso/);
+    assert.doesNotMatch(byPublisher, /distro-b\.iso/);
+
+    const byVolumeId = await (await fetch(app.url('/search?q=distro_a'))).text();
+    assert.match(byVolumeId, /distro-a\.iso/);
+    assert.doesNotMatch(byVolumeId, /distro-b\.iso/);
+
+    // Dieselbe Erweiterung muss auch im Admin-Bereich, in der JSON-API und
+    // in /api/v1/files gelten — alle nutzen dieselbe listFiles()-Funktion.
+    const { cookie } = await app.login();
+    const adminHtml = await (await fetch(app.url('/admin-search?q=acme'), { headers: { Cookie: cookie } })).text();
+    assert.match(adminHtml, /distro-a\.iso/);
+    assert.doesNotMatch(adminHtml, /distro-b\.iso/);
+
+    const apiFiles = await (await fetch(app.url('/api/files.json?q=acme'))).json();
+    assert.deepEqual(apiFiles.map(f => f.name), ['distro-a.iso']);
+
+    const v1 = await (await fetch(app.url('/api/v1/files?q=acme'))).json();
+    assert.deepEqual(v1.data.map(f => f.name), ['distro-a.iso']);
+});
+
+
 /* ===================================================== WebAuthn/Passkeys
    Kein echter WebAuthn-Roundtrip hier — der braucht einen echten
    Authenticator (siehe manueller Testpass im Plan). Getestet wird die

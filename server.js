@@ -507,6 +507,18 @@ function createApp(options = {}) {
         return Promise.all(names.map(describe));
     }
 
+    // Welche iso9660-Felder eine Volltextsuche zusaetzlich zu Name/Tags
+    // durchsucht — dieselbe Liste treibt sowohl den Server-Filter unten als
+    // auch die data-*-Attribute in file-row.ejs (fuer den clientseitigen
+    // Schnellfilter in filetable.js), damit beide Seiten dieselben Treffer
+    // liefern.
+    const ISO_SEARCH_FIELDS = ['volumeId', 'systemId', 'publisher', 'preparer', 'application', 'volumeSetId'];
+
+    function isoSearchText(iso) {
+        if (!iso) return '';
+        return ISO_SEARCH_FIELDS.map(field => iso[field] ?? '').join(' ');
+    }
+
     async function listFiles(query = '') {
         // Tags stecken im Sidecar und sind erst nach describe() bekannt,
         // darum laeuft der Suchfilter hier statt schon auf den readdir()-
@@ -518,11 +530,13 @@ function createApp(options = {}) {
         const matched = needle
             ? files.filter(file =>
                 file.name.toLowerCase().includes(needle) ||
-                file.tags.some(tag => tag.toLowerCase().includes(needle)))
+                file.tags.some(tag => tag.toLowerCase().includes(needle)) ||
+                isoSearchText(file.iso).toLowerCase().includes(needle))
             : files;
 
         return matched.sort((a, b) => a.name.localeCompare(b.name, 'de'));
     }
+
 
     /* Alle vorkommenden Tags ueber alle Dateien hinweg, fuer die Tag-
        Filterleiste in index.ejs/admin.ejs — bewusst unabhaengig von einer

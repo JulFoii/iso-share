@@ -23,8 +23,16 @@ const HASH_LABELS = {
 };
 const tags = file.tags || [];
 const searchBase = admin ? '/admin-search' : '/search';
+// Dieselben iso9660-Felder wie ISO_SEARCH_FIELDS/isoSearchText() in
+// server.js — der clientseitige Schnellfilter (filetable.js liest
+// row.dataset.search) soll dieselben Treffer liefern wie die Server-Suche.
+const isoSearchValues = file.iso
+  ? [file.iso.volumeId, file.iso.systemId, file.iso.publisher, file.iso.preparer, file.iso.application, file.iso.volumeSetId]
+  : [];
+const searchText = [file.name].concat(tags, isoSearchValues).filter(Boolean).join(' ');
 %>
-<tr data-search="<%= [file.name].concat(tags).join(' ') %>" data-row="<%= rowKey %>">
+<tr data-search="<%= searchText %>" data-row="<%= rowKey %>">
+
   <td class="table__select" data-label="">
     <input type="checkbox" data-select-file value="<%= file.name %>" aria-label="<%= file.name %> auswählen">
   </td>
