@@ -24,12 +24,13 @@ const { createApiTokenStore } = require('../lib/api-token-store');
 const { createSessionSecretStore } = require('../lib/session-secret-store');
 const { createPasswordStore } = require('../lib/password-store');
 const { createUsernameStore } = require('../lib/username-store');
-const { safeCredentialId, safePasskeyLabel, safeUsername, safeTag } = require('../lib/safe-name');
+const { safeCredentialId, safePasskeyLabel, safeUsername, safeTag, safeBackupName } = require('../lib/safe-name');
 const {
     generateSecret, base32Encode, base32Decode, totpAt, verifyTotp, buildOtpauthUri,
 } = require('../lib/totp');
 const { createTotpStore } = require('../lib/totp-store');
 const { createAuditLog } = require('../lib/audit-log');
+const { createBackupStore } = require('../lib/backup-store');
 const { writeZip, fitsInClassicZip, crc32Update } = require('../lib/zip-stream');
 const { makeIso } = require('./helpers/make-iso');
 
@@ -1208,6 +1209,161 @@ test('audit-log: kuerzt auf die juengsten Zeilen, sobald das Zeilenlimit uebersc
     const entries = await auditLog.read({ limit: Infinity });
     assert.equal(entries.length, 30, 'muss nach dem Schreiben auf keepRowsOnTrim gekuerzt worden sein');
     assert.equal(entries[0].event, 'neuestes_ereignis', 'juengster Eintrag darf beim Kuerzen nie verloren gehen');
+});
+
+/* ============================================================ safeBackupName */
+
+test('safeBackupName akzeptiert nur das serverseitig erzeugte Format', () => {
+    assert.equal(
+        safeBackupName('iso-share-20260922T140305Z-a1b2c3.db'),
+        'iso-share-20260922T140305Z-a1b2c3.db'
+    );
+    assert.equal(
+        safeBackupName('pre-restore-iso-share-20260922T140305Z-a1b2c3.db'),
+        'pre-restore-iso-share-20260922T140305Z-a1b2c3.db'
+    );
+});
+
+test('safeBackupName weist Traversal und Freitext ab', () => {
+    for (const input of [
+        '../../../etc/passwd',
+        'iso-share.db',
+        'iso-share-20260922.db',
+        'iso-share-20260922T140305Z.db',       // ohne Zufalls-Suffix
+        'iso-share-20260922T140305Z-a1b2c3.db; rm -rf',
+        '', null, undefined,
+    ]) {
+        assert.equal(safeBackupName(input), null, `haette ${JSON.stringify(input)} ablehnen muessen`);
+    }
+});
+
+/* ============================================================ backup-store */
+
+test('createBackup erzeugt eine Datei mit passender Checksumme, listBackups findet sie', async () => {
+    const db = memoryDb();
+    db.exec('CREATE TABLE probe (x INTEGER)');
+    db.prepare('INSERT INTO probe (x) VALUES (1)').run();
+
+    const dir = await tempDir();
+    const store = createBackupStore({ db, backupDir: dir });
+
+    const backup = await store.createBackup('manual');
+    const filePath = path.join(dir, backup.file);
+    const actualHash = crypto.createHash('sha256').update(await fsp.readFile(filePath)).digest('hex');
+    assert.equal(backup.sha256, actualHash);
+    assert.equal((await fsp.readFile(filePath + '.sha256', 'utf8')).trim(), actualHash);
+
+    const list = await store.listBackups();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].file, backup.file);
+    assert.equal(list[0].sha256, actualHash);
+    assert.equal(list[0].preRestore, false);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('writeSettings klemmt Grenzwerte und lehnt nicht-numerische Eingaben ab', async () => {
+    const dir = await tempDir();
+    const store = createBackupStore({ db: memoryDb(), backupDir: dir });
+
+    assert.equal(store.writeSettings({ intervalMinutes: 'x', retentionCount: 10, enabled: true }), null);
+
+    const clamped = store.writeSettings({ intervalMinutes: 999999, retentionCount: -5, enabled: false });
+    assert.equal(clamped.intervalMinutes, 1440);
+    assert.equal(clamped.retentionCount, 1);
+    assert.equal(clamped.enabled, false);
+    assert.deepEqual(store.readSettings(), clamped);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('createBackup kuerzt alte Sicherungen auf retentionCount, laesst pre-restore-Sicherungen aber unangetastet', async () => {
+    const dir = await tempDir();
+    const store = createBackupStore({ db: memoryDb(), backupDir: dir });
+    store.writeSettings({ intervalMinutes: 60, retentionCount: 2, enabled: true });
+
+    await store.createBackup('pre-restore');
+    await store.createBackup('manual');
+    await store.createBackup('manual');
+    await store.createBackup('manual');
+
+    const list = await store.listBackups();
+    assert.equal(list.filter(b => !b.preRestore).length, 2, 'nur die 2 juengsten regulaeren Sicherungen bleiben');
+    assert.equal(list.filter(b => b.preRestore).length, 1, 'pre-restore-Sicherung wird von der Kuerzung nicht angefasst');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('deleteBackup entfernt Datei und Sidecar, verifyBackup erkennt eine manipulierte Sicherung', async () => {
+    const dir = await tempDir();
+    const store = createBackupStore({ db: memoryDb(), backupDir: dir });
+    const backup = await store.createBackup('manual');
+
+    assert.equal((await store.verifyBackup(backup.file)).ok, true);
+
+    await fsp.appendFile(path.join(dir, backup.file), 'garbage');
+    const mismatch = await store.verifyBackup(backup.file);
+    assert.equal(mismatch.ok, false);
+    assert.equal(mismatch.reason, 'mismatch');
+
+    assert.equal(await store.deleteBackup(backup.file), true);
+    assert.equal(await store.deleteBackup(backup.file), false, 'zweites Loeschen findet nichts mehr');
+    assert.equal((await fsp.readdir(dir)).length, 0);
+    assert.equal(await store.deleteBackup('../../etc/passwd'), false, 'ungueltiger Name wird abgelehnt');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('restoreBackup ersetzt die Live-Datenbank durch die gewaehlte Sicherung und legt vorher eine Sicherheitskopie an', async () => {
+    const { file: dbPath, open, cleanup } = await restartDb();
+    const db = open();
+    db.exec('CREATE TABLE probe (x TEXT)');
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('original');
+
+    const backupDir = await tempDir();
+    const store = createBackupStore({ db, backupDir });
+    const backup = await store.createBackup('manual'); // sichert den 'original'-Stand
+
+    db.prepare('DELETE FROM probe').run();
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('veraendert');
+
+    const result = await store.restoreBackup(backup.file, { dbPath });
+    assert.equal(result.restoredFrom, backup.file);
+    assert.match(result.safetySnapshot, /^pre-restore-/);
+
+    // db wurde von restoreBackup geschlossen — frisch oeffnen und pruefen
+    const reopened = open();
+    assert.deepEqual(reopened.prepare('SELECT x FROM probe').all().map(row => ({ ...row })), [{ x: 'original' }]);
+    reopened.close();
+
+    // Die pre-restore-Sicherheitskopie haelt den 'veraendert'-Stand von unmittelbar vor der Wiederherstellung fest
+    const safetyDb = openDatabase(path.join(backupDir, result.safetySnapshot));
+    assert.deepEqual(
+        safetyDb.prepare('SELECT x FROM probe').all().map(row => ({ ...row })), [{ x: 'veraendert' }]
+    );
+    safetyDb.close();
+
+    await fsp.rm(backupDir, { recursive: true, force: true });
+    await cleanup();
+});
+
+test('restoreBackup lehnt eine Sicherung mit falscher Checksumme ab, ohne die Live-DB anzufassen', async () => {
+    const { file: dbPath, open, cleanup } = await restartDb();
+    const db = open();
+    db.exec('CREATE TABLE probe (x TEXT)');
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('unangetastet');
+
+    const backupDir = await tempDir();
+    const store = createBackupStore({ db, backupDir });
+    const backup = await store.createBackup('manual');
+    await fsp.appendFile(path.join(backupDir, backup.file), 'garbage');
+
+    await assert.rejects(() => store.restoreBackup(backup.file, { dbPath }), /Checksumme/);
+    assert.deepEqual(db.prepare('SELECT x FROM probe').all().map(row => ({ ...row })), [{ x: 'unangetastet' }]);
+
+    db.close();
+    await fsp.rm(backupDir, { recursive: true, force: true });
+    await cleanup();
 });
 
 /* ============================================================= zip-stream */

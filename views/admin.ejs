@@ -34,6 +34,14 @@
         </svg>
         Sicherheit
       </a>
+      <a class="tab" href="#tab-backups" data-tab-link="backups">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="8" ry="3"/>
+          <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>
+          <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>
+        </svg>
+        Backups
+      </a>
       <a class="tab" href="#tab-account" data-tab-link="account">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="8" r="4"/>
@@ -309,6 +317,85 @@
               </li>
             <% }); %>
           </ul>
+        </div>
+      </section>
+    </div>
+
+    <div class="stack" id="tab-backups" data-tab-panel="backups">
+      <!-- Sicherungen -->
+      <section class="card reveal" aria-labelledby="backups-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="backups-heading">Datenbank-Sicherungen</h2>
+        </div>
+        <div class="card__body">
+          <p class="hint mb-4">
+            Sichert nur die SQLite-Datenbank (Dateiliste, Zugangsdaten,
+            Sitzungen, Audit-Log …), nicht die ISO-Dateien selbst — die
+            bleiben Sache regulärer Dateisystem-/Volume-Sicherung.
+          </p>
+          <ul class="stack" id="backupList">
+            <%- include('partials/backup-rows', { backups }) %>
+            <% if (backups.length === 0) { %>
+              <li class="empty" data-backup-empty>
+                <p class="empty__title">Noch keine Sicherung</p>
+                <p class="empty__text">Läuft automatisch nach Zeitplan, oder jetzt manuell anstoßen.</p>
+              </li>
+            <% } %>
+          </ul>
+          <form class="row mt-4" id="backupCreateForm" method="POST" action="/admin/backups">
+            <button type="submit" class="btn btn--secondary" id="backupCreateButton">Jetzt sichern</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Zeitplan -->
+      <section class="card reveal" aria-labelledby="backup-settings-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="backup-settings-heading">Zeitplan</h2>
+        </div>
+        <div class="card__body">
+          <% if (backupSettingsError) { %>
+            <div class="alert alert--danger mb-4" role="alert">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span><%= backupSettingsError %></span>
+            </div>
+          <% } %>
+          <form class="stack" id="backupSettingsForm" method="POST" action="/admin/backup-settings">
+            <div class="field">
+              <label class="label" for="backupInterval">Intervall (Minuten)</label>
+              <input
+                class="input"
+                type="number"
+                id="backupInterval"
+                name="intervalMinutes"
+                min="5"
+                max="1440"
+                value="<%= backupSettings.intervalMinutes %>"
+                required>
+            </div>
+            <div class="field">
+              <label class="label" for="backupRetention">Aufbewahrte Sicherungen</label>
+              <input
+                class="input"
+                type="number"
+                id="backupRetention"
+                name="retentionCount"
+                min="1"
+                max="500"
+                value="<%= backupSettings.retentionCount %>"
+                required>
+            </div>
+            <label class="row">
+              <input type="checkbox" id="backupEnabled" name="enabled" <%= backupSettings.enabled ? 'checked' : '' %>>
+              Automatische Sicherung aktiv
+            </label>
+            <div class="row">
+              <button type="submit" class="btn btn--secondary">Speichern</button>
+            </div>
+          </form>
         </div>
       </section>
     </div>
@@ -630,6 +717,45 @@
   </form>
 </dialog>
 
+<dialog class="dialog" id="backupDeleteDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Sicherung löschen?</h2>
+      <p class="dialog__text">
+        <strong class="mono" id="backupDeleteFilename"></strong> wird endgültig entfernt.
+      </p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="backupDeleteConfirm">Löschen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="backupRestoreDialog">
+  <form method="dialog">
+    <div class="dialog__body">
+      <h2 class="dialog__title">Sicherung wiederherstellen?</h2>
+      <p class="dialog__text">
+        Ersetzt die komplette aktuelle Datenbank (Dateiliste, Zugangsdaten,
+        Sitzungen, Audit-Log …) durch <strong class="mono" id="backupRestoreFilename"></strong>.
+        Alle aktuellen Sitzungen — auch diese — werden ungültig, der Server
+        startet danach neu. Von der aktuellen Datenbank wird vorher
+        automatisch eine Sicherheitskopie angelegt.
+      </p>
+      <div class="field">
+        <label class="label" for="backupRestoreConfirmInput">Zum Bestätigen den Dateinamen eingeben</label>
+        <input class="input mono" type="text" id="backupRestoreConfirmInput" autocomplete="off">
+      </div>
+      <p class="hint" id="backupRestoreError"></p>
+    </div>
+    <div class="dialog__footer">
+      <button type="submit" class="btn btn--secondary" formnovalidate>Abbrechen</button>
+      <button type="button" class="btn btn--danger" id="backupRestoreConfirm" disabled>Wiederherstellen</button>
+    </div>
+  </form>
+</dialog>
+
 <script src="/js/theme.js" defer></script>
 <script src="/js/idle-timer.js" defer></script>
 <script src="/js/toast.js" defer></script>
@@ -646,6 +772,7 @@
 <script src="/js/api-tokens.js" defer></script>
 <script src="/js/password-toggle.js" defer></script>
 <script src="/js/account-forms.js" defer></script>
+<script src="/js/backups.js" defer></script>
 <script src="/js/heartbeat.js" defer></script>
 </body>
 </html>

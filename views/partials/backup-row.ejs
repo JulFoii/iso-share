@@ -1,0 +1,12 @@
+<li class="row row--between" data-backup-file="<%= backup.file %>">
+  <span>
+    <span class="mono"><%= backup.file %></span>
+    <% if (backup.preRestore) { %><span class="badge badge--mono">Sicherheitskopie</span><% } %>
+    <span class="hint">— <%= formatSize(backup.size) %>, <%= formatDate(backup.createdAt) %> <%= new Date(backup.createdAt).toLocaleTimeString('de-DE') %></span>
+  </span>
+  <span class="row">
+    <a class="btn btn--ghost btn--sm" href="/admin/backups/<%= encodeURIComponent(backup.file) %>/download" download>Herunterladen</a>
+    <button type="button" class="btn btn--secondary btn--sm" data-backup-restore="<%= backup.file %>">Wiederherstellen</button>
+    <button type="button" class="btn btn--danger-ghost btn--sm" data-backup-delete="<%= backup.file %>">Löschen</button>
+  </span>
+</li>

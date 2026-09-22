@@ -1994,3 +1994,158 @@ test('unbekannte /api/v1-Route liefert JSON-404 statt Plaintext', async t => {
     assert.equal(res.status, 404);
     assert.deepEqual(await res.json(), { error: 'Nicht gefunden.', code: 'not_found' });
 });
+
+/* =============================================================== Backups
+   Der eigentliche Erfolgspfad von POST /admin/backups/:filename/restore
+   (der den Prozess absichtlich mit process.exit(1) beendet, siehe
+   lib/backup-store.js/server.js) wird hier bewusst NICHT ausgeloest — das
+   wuerde den Test-Runner-Prozess selbst beenden. Der Datei-Tausch-Teil
+   (restoreBackup() ohne den process.exit-Aufruf) ist stattdessen in
+   test/units.test.js isoliert getestet; hier nur die Route drumherum:
+   Auth, Validierung, Checksum-Ablehnung. */
+
+test('Backup-Routen sind ohne Sitzung nicht erreichbar', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const jsonHeaders = { Accept: 'application/json' };
+    const placeholder = 'iso-share-20260101T000000Z-abcdef.db';
+
+    assert.equal(
+        (await fetch(app.url('/admin/backups'), { method: 'POST', headers: jsonHeaders })).status, 401
+    );
+    assert.equal(
+        (await fetch(app.url(`/admin/backups/${placeholder}`), { method: 'DELETE', headers: jsonHeaders })).status,
+        401
+    );
+    assert.equal(
+        (await fetch(app.url('/admin/backup-settings'), {
+            method: 'POST', headers: { ...jsonHeaders, 'Content-Type': 'application/json' }, body: '{}',
+        })).status,
+        401
+    );
+    assert.equal(
+        (await fetch(app.url(`/admin/backups/${placeholder}/restore`), {
+            method: 'POST', headers: { ...jsonHeaders, 'Content-Type': 'application/json' }, body: '{}',
+        })).status,
+        401
+    );
+});
+
+test('POST /admin/backups legt eine Sicherung an, GET .../download liefert sie, DELETE entfernt sie wieder', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const create = await fetch(app.url('/admin/backups'), {
+        method: 'POST',
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    });
+    assert.equal(create.status, 201);
+    const backup = await create.json();
+    assert.match(backup.file, /^iso-share-.+\.db$/);
+    assert.equal(typeof backup.sha256, 'string');
+
+    assert.deepEqual((await app.services.backupStore.listBackups()).map(b => b.file), [backup.file]);
+
+    const download = await fetch(app.url(`/admin/backups/${backup.file}/download`), {
+        headers: { Cookie: cookie },
+    });
+    assert.equal(download.status, 200);
+    const downloaded = Buffer.from(await download.arrayBuffer());
+    assert.equal(crypto.createHash('sha256').update(downloaded).digest('hex'), backup.sha256);
+
+    const del = await fetch(app.url(`/admin/backups/${backup.file}`), {
+        method: 'DELETE', headers: { Cookie: cookie },
+    });
+    assert.equal(del.status, 204);
+    assert.deepEqual(await app.services.backupStore.listBackups(), []);
+
+    const delAgain = await fetch(app.url(`/admin/backups/${backup.file}`), {
+        method: 'DELETE', headers: { Cookie: cookie },
+    });
+    assert.equal(delAgain.status, 404);
+});
+
+test('Backup-Routen mit ungueltigem :filename lehnen ab, statt das Dateisystem anzufassen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    for (const bad of ['../../etc/passwd', 'nicht-iso-share.db', 'iso-share.db']) {
+        const del = await fetch(app.url(`/admin/backups/${encodeURIComponent(bad)}`), {
+            method: 'DELETE', headers: { Cookie: cookie },
+        });
+        assert.equal(del.status, 400, `"${bad}" haette 400 ergeben muessen`);
+
+        const dl = await fetch(app.url(`/admin/backups/${encodeURIComponent(bad)}/download`), {
+            headers: { Cookie: cookie },
+        });
+        assert.equal(dl.status, 400, `"${bad}" haette 400 ergeben muessen`);
+    }
+});
+
+test('POST /admin/backup-settings validiert, klemmt Grenzwerte und plant den Timer sofort neu', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const invalid = await fetch(app.url('/admin/backup-settings'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ intervalMinutes: 'nicht-numerisch', retentionCount: 5, enabled: true }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const res = await fetch(app.url('/admin/backup-settings'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ intervalMinutes: 999999, retentionCount: -1, enabled: false }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.intervalMinutes, 1440, 'wird auf das Maximum geklemmt');
+    assert.equal(body.retentionCount, 1, 'wird auf das Minimum geklemmt');
+    assert.equal(body.enabled, false);
+
+    assert.deepEqual(app.services.backupStore.readSettings(), body);
+});
+
+test(
+    'POST /admin/backups/:filename/restore lehnt falsche Bestaetigung und manipulierte Checksumme ab, ' +
+    'ohne die Live-DB anzufassen',
+    async t => {
+        const app = await startTestApp();
+        t.after(() => app.close());
+        const { cookie } = await app.login();
+        await seedIso(app, 'vorher.iso');
+
+        const create = await fetch(app.url('/admin/backups'), {
+            method: 'POST', headers: { Cookie: cookie, Accept: 'application/json' },
+        });
+        const backup = await create.json();
+
+        const wrongConfirm = await fetch(app.url(`/admin/backups/${backup.file}/restore`), {
+            method: 'POST',
+            headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ confirm: 'falscher-dateiname.db' }),
+        });
+        assert.equal(wrongConfirm.status, 400);
+
+        // Backup-Datei nachtraeglich manipulieren, damit die Checksumme nicht mehr passt
+        const backupPath = path.join(app.root, 'data', 'backups', backup.file);
+        await fsp.appendFile(backupPath, 'garbage');
+
+        const badChecksum = await fetch(app.url(`/admin/backups/${backup.file}/restore`), {
+            method: 'POST',
+            headers: { Cookie: cookie, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ confirm: backup.file }),
+        });
+        assert.equal(badChecksum.status, 400);
+        assert.match((await badChecksum.json()).error, /Checksumme/);
+
+        // App laeuft unbeeintraechtigt weiter -- die zuvor geseedete Datei ist noch da
+        const listing = await fetch(app.url('/api/files.json'));
+        assert.deepEqual((await listing.json()).map(f => f.name), ['vorher.iso']);
+    }
+);

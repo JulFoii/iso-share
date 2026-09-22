@@ -35,7 +35,7 @@ const path = require('path');
 
 const {
     safeIsoName, safeUploadId, safeCredentialId, safePasskeyLabel, safeUsername, safeTag,
-    safeApiTokenId, safeApiTokenLabel,
+    safeApiTokenId, safeApiTokenLabel, safeBackupName,
 } = require('./lib/safe-name');
 const { moveFile } = require('./lib/move-file');
 const { openDatabase } = require('./lib/db');
@@ -50,6 +50,7 @@ const { createPasswordStore } = require('./lib/password-store');
 const { createUsernameStore } = require('./lib/username-store');
 const { createTotpStore } = require('./lib/totp-store');
 const { createApiTokenStore } = require('./lib/api-token-store');
+const { createBackupStore } = require('./lib/backup-store');
 const { generateSecret, verifyTotp, buildOtpauthUri } = require('./lib/totp');
 const { createAuditLog } = require('./lib/audit-log');
 const { writeZip, fitsInClassicZip } = require('./lib/zip-stream');
@@ -113,7 +114,8 @@ function createApp(options = {}) {
      * oeffnet, weil DatabaseSync selbst synchron ist und dies nur einmal
      * beim App-Aufbau passiert, nie in einem Request-Handler.
      */
-    const db = openDatabase(path.join(DATA_DIR, 'iso-share.db'));
+    const DB_PATH = path.join(DATA_DIR, 'iso-share.db');
+    const db = openDatabase(DB_PATH);
 
     /* ----------------------------------------------------------- Secrets --
        Bootstrap-Prinzip (siehe auch der Kommentar oben in lib/db.js): der aus
@@ -199,6 +201,8 @@ function createApp(options = {}) {
     const totpStore = createTotpStore({ db });
     const auditLog = createAuditLog({ db });
     const apiTokenStore = createApiTokenStore({ db });
+    const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+    const backupStore = createBackupStore({ db, backupDir: BACKUP_DIR, log });
 
     const app = express();
 
@@ -688,8 +692,13 @@ function createApp(options = {}) {
      * Fehler-Pfade von POST /admin-password und /admin-username), alle mit
      * denselben Grunddaten plus je einem eigenen Fehlerfeld/Suchbegriff.
      */
-    async function adminPageData({ query = '', passwordError = null, usernameError = null } = {}) {
-        const [files, allTags, passkeys, currentUsername, totpEnabled, auditEntries, apiTokens] =
+    async function adminPageData({
+        query = '', passwordError = null, usernameError = null, backupSettingsError = null,
+    } = {}) {
+        const [
+            files, allTags, passkeys, currentUsername, totpEnabled, auditEntries, apiTokens,
+            backups,
+        ] =
             await Promise.all([
                 listFiles(query),
                 listAllTags(),
@@ -698,10 +707,12 @@ function createApp(options = {}) {
                 totpStore.isEnabled(),
                 auditLog.read({ limit: 8 }),
                 apiTokenStore.listTokens(),
+                backupStore.listBackups(),
             ]);
         return {
             files, allTags, maxFileSizeMb: MAX_FILE_SIZE_MB, passkeys, currentUsername,
             totpEnabled, auditEntries, apiTokens, passwordError, usernameError,
+            backups, backupSettings: backupStore.readSettings(), backupSettingsError,
         };
     }
 
@@ -1300,6 +1311,113 @@ function createApp(options = {}) {
         const removed = await apiTokenStore.revokeToken(id);
         if (removed) auditLog.log('api_token_revoked', { ip: req.ip, tokenId: id });
         res.status(removed ? 204 : 404).end();
+    });
+
+    /*
+     * Sicherungen der Datenbank selbst (siehe lib/backup-store.js) — nicht
+     * der ISO-Dateien in uploads/, die bleiben Sache des Admins. Liste und
+     * Einstellungen kommen ueber adminPageData() mit auf die Verwaltungs-
+     * seite, hier nur die Aktionen.
+     */
+
+    app.post('/admin/backups', checkAuth, async (req, res, next) => {
+        const wantsJson = req.accepts(['html', 'json']) === 'json';
+        try {
+            const backup = await backupStore.createBackup('manual');
+            auditLog.log('backup_created', { ip: req.ip, file: backup.file, size: backup.size });
+            if (wantsJson) return res.status(201).json(backup);
+            res.redirect('/admin-upload#tab-backups');
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    app.get('/admin/backups/:filename/download', checkAuth, async (req, res, next) => {
+        const filename = safeBackupName(req.params.filename);
+        if (!filename) return res.status(400).send('Ungültiger Dateiname.');
+        try {
+            await fsp.access(path.join(BACKUP_DIR, filename));
+        } catch {
+            return res.status(404).send('Sicherung nicht gefunden.');
+        }
+        res.download(path.join(BACKUP_DIR, filename), filename, err => {
+            if (err && !res.headersSent) next(err);
+        });
+    });
+
+    app.delete('/admin/backups/:filename', checkAuth, async (req, res) => {
+        const filename = safeBackupName(req.params.filename);
+        if (!filename) return res.status(400).json({ error: 'Ungültiger Dateiname.' });
+        const removed = await backupStore.deleteBackup(filename);
+        if (removed) auditLog.log('backup_deleted', { ip: req.ip, file: filename });
+        res.status(removed ? 204 : 404).end();
+    });
+
+    app.post('/admin/backup-settings', checkAuth, async (req, res, next) => {
+        const wantsJson = req.accepts(['html', 'json']) === 'json';
+        const updated = backupStore.writeSettings({
+            intervalMinutes: req.body.intervalMinutes,
+            retentionCount: req.body.retentionCount,
+            enabled: Boolean(req.body.enabled),
+        });
+        if (!updated) {
+            const error = 'Ungültige Werte für Intervall oder Aufbewahrung.';
+            if (wantsJson) return res.status(400).json({ error });
+            try {
+                return res.status(400).render('admin', await adminPageData({ backupSettingsError: error }));
+            } catch (err) {
+                return next(err);
+            }
+        }
+        try {
+            armBackupTimer();
+            auditLog.log('backup_settings_changed', { ip: req.ip, ...updated });
+            if (wantsJson) return res.json(updated);
+            res.redirect('/admin-upload#tab-backups');
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /*
+     * Die destruktive Aktion: tauscht die Live-Datenbankdatei gegen die
+     * gewaehlte Sicherung aus und beendet danach den Prozess absichtlich,
+     * damit ein Neustart (docker-compose.yml: restart: unless-stopped) eine
+     * frische DatabaseSync-Instanz auf der wiederhergestellten Datei
+     * oeffnet — siehe Design-Kommentar bei restoreBackup() in
+     * lib/backup-store.js dazu, warum kein Live-Reopen ohne Neustart
+     * versucht wird. `confirm` muss exakt dem Dateinamen entsprechen
+     * (Tippen-zum-Bestaetigen im UI), dieselbe Reibung wie bei anderen
+     * irreversiblen Aktionen erwartet.
+     */
+    app.post('/admin/backups/:filename/restore', checkAuth, async (req, res, next) => {
+        const filename = safeBackupName(req.params.filename);
+        if (!filename) return res.status(400).json({ error: 'Ungültiger Dateiname.' });
+        if (String(req.body.confirm ?? '') !== filename) {
+            return res.status(400).json({ error: 'Bestätigung stimmt nicht mit dem Dateinamen überein.' });
+        }
+
+        let result;
+        try {
+            result = await backupStore.restoreBackup(filename, { dbPath: DB_PATH });
+        } catch (err) {
+            if (err.code) return res.status(400).json({ error: err.message, code: err.code });
+            return next(err);
+        }
+
+        // Audit-Log liegt in der DB, die gerade ueberschrieben wurde — der
+        // Eintrag ueberlebt den Neustart also nicht. Stattdessen eine
+        // Markerdatei ausserhalb der DB, damit nach dem Neustart sichtbar
+        // bleibt, was passiert ist.
+        await fsp.writeFile(
+            path.join(DATA_DIR, 'last-restore.json'),
+            JSON.stringify({ ...result, ip: req.ip, ts: Date.now() }, null, 2)
+        ).catch(() => {});
+
+        res.json({ ok: true, message: 'Wiederhergestellt. Server startet neu …' });
+        res.on('finish', () => {
+            setTimeout(() => process.exit(1), 250);
+        });
     });
 
     app.get('/admin-audit-log', checkAuth, async (req, res, next) => {
@@ -2022,6 +2140,29 @@ function createApp(options = {}) {
         timers.push(sweep);
     }
 
+    /*
+     * Anders als der feste sweep-Timer oben neu einplanbar: /admin/backup-
+     * settings ruft das nach jeder Aenderung erneut auf, damit ein neues
+     * Intervall sofort greift, ohne die App neu zu starten — genau die vom
+     * Nutzer gewuenschte Einstellbarkeit.
+     */
+    let backupTimer = null;
+    function armBackupTimer() {
+        if (backupTimer) clearInterval(backupTimer);
+        const settings = backupStore.readSettings();
+        if (!settings.enabled) {
+            backupTimer = null;
+            return;
+        }
+        backupTimer = setInterval(() => {
+            backupStore.createBackup('scheduled').catch(err => {
+                log.error('Geplante Sicherung fehlgeschlagen:', err.message);
+            });
+        }, settings.intervalMinutes * 60 * 1000);
+        if (typeof backupTimer.unref === 'function') backupTimer.unref();
+    }
+    armBackupTimer();
+
     async function start() {
         await fsp.mkdir(UPLOADS_DIR, { recursive: true });
         await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -2077,6 +2218,7 @@ function createApp(options = {}) {
      */
     async function stop() {
         timers.forEach(clearInterval);
+        if (backupTimer) clearInterval(backupTimer);
         sessionStore.close();
         db.close();
     }
@@ -2089,7 +2231,7 @@ function createApp(options = {}) {
         services: {
             db, metadata, hashQueue, uploadSessions, sessionStore,
             webauthnStore, passwordStore, usernameStore, totpStore, auditLog, listFiles,
-            apiTokenStore,
+            apiTokenStore, backupStore,
         },
     };
 }
