@@ -1328,6 +1328,13 @@ function createApp(options = {}) {
             if (wantsJson) return res.status(201).json(backup);
             res.redirect('/admin-upload#tab-backups');
         } catch (err) {
+            // Kollidiert mit einem gerade laufenden geplanten/manuellen Lauf
+            // oder einer laufenden Wiederherstellung — kein Serverfehler,
+            // einfach nochmal versuchen.
+            if (err.code === 'backup_in_progress') {
+                if (wantsJson) return res.status(409).json({ error: err.message, code: err.code });
+                return res.redirect('/admin-upload#tab-backups');
+            }
             next(err);
         }
     });
@@ -1401,6 +1408,26 @@ function createApp(options = {}) {
         try {
             result = await backupStore.restoreBackup(filename, { dbPath: DB_PATH });
         } catch (err) {
+            // db ist in diesem Fall schon geschlossen (siehe Design-Kommentar
+            // bei restoreBackup() in lib/backup-store.js) — der Dateitausch
+            // selbst ist zwar evtl. nicht vollstaendig geglueckt, aber der
+            // Prozess kann in diesem Zustand nicht mehr normal weiterlaufen
+            // und MUSS trotzdem beendet werden, statt als "sauberer" 400
+            // ohne Neustart durchzugehen. Die zuvor angelegte pre-restore-
+            // Sicherheitskopie bleibt fuer eine manuelle Reparatur erhalten.
+            if (err.dbClosed) {
+                log.error(
+                    'Restore-Dateitausch fehlgeschlagen, nachdem die DB bereits geschlossen wurde — ' +
+                    'Prozess wird trotzdem beendet:', err.message
+                );
+                res.status(500).json({ error: 'Wiederherstellung fehlgeschlagen — Server startet trotzdem neu.' });
+                return res.on('finish', () => {
+                    setTimeout(() => process.exit(1), 250);
+                });
+            }
+            if (err.code === 'backup_in_progress') {
+                return res.status(409).json({ error: err.message, code: err.code });
+            }
             if (err.code) return res.status(400).json({ error: err.message, code: err.code });
             return next(err);
         }

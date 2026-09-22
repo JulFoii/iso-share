@@ -1366,6 +1366,83 @@ test('restoreBackup lehnt eine Sicherung mit falscher Checksumme ab, ohne die Li
     await cleanup();
 });
 
+test('createBackup lehnt eine gleichzeitige zweite Sicherung mit code backup_in_progress ab', async () => {
+    const dir = await tempDir();
+    const store = createBackupStore({ db: memoryDb(), backupDir: dir });
+
+    const [a, b] = await Promise.allSettled([store.createBackup('manual'), store.createBackup('manual')]);
+    const fulfilled = [a, b].filter(r => r.status === 'fulfilled');
+    const rejected = [a, b].filter(r => r.status === 'rejected');
+    assert.equal(fulfilled.length, 1, 'genau eine der beiden gleichzeitigen Sicherungen darf durchgehen');
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.code, 'backup_in_progress');
+
+    await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('restoreBackup lehnt eine gleichzeitige zweite Wiederherstellung ab, statt db.close() doppelt anzustossen', async () => {
+    const { file: dbPath, open, cleanup } = await restartDb();
+    const db = open();
+    db.exec('CREATE TABLE probe (x TEXT)');
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('erste-zeile');
+
+    const backupDir = await tempDir();
+    const store = createBackupStore({ db, backupDir });
+    const backupA = await store.createBackup('manual');
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('zweite-zeile');
+    const backupB = await store.createBackup('manual');
+
+    const [resultA, resultB] = await Promise.allSettled([
+        store.restoreBackup(backupA.file, { dbPath }),
+        store.restoreBackup(backupB.file, { dbPath }),
+    ]);
+
+    const fulfilled = [resultA, resultB].filter(r => r.status === 'fulfilled');
+    const rejected = [resultA, resultB].filter(r => r.status === 'rejected');
+    assert.equal(fulfilled.length, 1, 'genau eine der beiden gleichzeitigen Restores darf db.close() erreichen');
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.code, 'backup_in_progress');
+    assert.equal(
+        'dbClosed' in rejected[0].reason, false,
+        'die abgelehnte Anfrage darf db.close() nie erreicht haben'
+    );
+
+    // Die Datei muss trotz der Race unbeschaedigt und wieder oeffenbar sein.
+    open().close();
+
+    await fsp.rm(backupDir, { recursive: true, force: true });
+    await cleanup();
+});
+
+test('restoreBackup markiert einen Fehler nach db.close() mit dbClosed, statt ihn wie einen normalen Validierungsfehler zu behandeln', async () => {
+    const { file: dbPath, open, cleanup } = await restartDb();
+    const db = open();
+    db.exec('CREATE TABLE probe (x TEXT)');
+    db.prepare('INSERT INTO probe (x) VALUES (?)').run('original');
+
+    const backupDir = await tempDir();
+    const store = createBackupStore({ db, backupDir });
+    const backup = await store.createBackup('manual');
+
+    // dbPath zeigt bewusst auf ein Verzeichnis statt eine Datei, damit
+    // fsp.copyFile() ERST NACH dem db.close() scheitert (EISDIR) — steht
+    // stellvertretend fuer z.B. eine volle Platte oder fehlende Schreib-
+    // rechte an derselben Stelle.
+    const bogusDbPath = await tempDir();
+
+    await assert.rejects(
+        () => store.restoreBackup(backup.file, { dbPath: bogusDbPath }),
+        err => {
+            assert.equal(err.dbClosed, true, 'ein Fehler nach db.close() muss dbClosed tragen');
+            return true;
+        }
+    );
+
+    await fsp.rm(backupDir, { recursive: true, force: true });
+    await fsp.rm(bogusDbPath, { recursive: true, force: true });
+    await cleanup();
+});
+
 /* ============================================================= zip-stream */
 
 test('crc32Update stimmt mit dem bekannten Testvektor ueberein', () => {
