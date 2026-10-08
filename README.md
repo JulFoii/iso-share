@@ -1,108 +1,36 @@
 # ISO Share
 
-**ISO Share** ist eine minimalistische Webanwendung zum sicheren Teilen und Verwalten von ISO-Dateien – ideal als Basis für weitere Erweiterungen. Die Anwendung bietet einen einfachen Datei‑Upload, Download sowie Echtzeit‑Suche und Sortierung mit einem sauberen, klassischen, hellen Bootstrap‑Design.
-
----
-
-## Inhaltsverzeichnis
-
-- [Features](#features)
-- [Installation](#installation)
-
----
+**ISO Share** ist eine schlanke, selbst gehostete Webanwendung zum sicheren Teilen und Verwalten von ISO-Images, mit integriertem Support-Ticketsystem.
 
 ## Features
 
-- **Einfacher Datei‑Upload:**  
-  Lade ausschließlich ISO-Dateien hoch – unerwünschte Dateitypen werden automatisch abgelehnt.
+- **ISO-Verwaltung**: fortsetzbare Uploads bis mehrere GB, Downloads mit Range-Support, ZIP-Sammeldownload, Duplikaterkennung per SHA-256, automatische Tags aus den ISO-Metadaten (Bootfähigkeit BIOS/UEFI, Volume-Label)
+- **Prüfsummen**: `SHA256SUMS` unter `/checksums`, JSON-API unter `/api/v1` (OpenAPI: `/openapi.json`)
+- **Admin-Bereich**: Passwort plus optional Passkey oder TOTP, Audit-Log, API-Tokens, automatische Datenbank-Sicherungen mit Wiederherstellung
+- **Support-Portal**: Kundenkonten, Tickets mit Anhängen, Mail-Benachrichtigungen, Antworten per E-Mail, Automatik für Erinnerungen und Schließen
+- **Betrieb**: SQLite ohne separaten DB-Server, JSON-Logs, `/healthz`, Prometheus-`/metrics`, Löschfristen nach DSGVO
+- Kein CSS/JS-Framework, kein CDN — alles wird vom eigenen Server ausgeliefert
 
-- **Dateiverwaltung & Download:**  
-  Alle hochgeladenen Dateien werden in einer übersichtlichen, sortierbaren Tabelle angezeigt.  
-  *Sortierung:*  
-  - Klick auf „Dateiname“ sortiert abwechselnd von A–Z und Z–A.  
-  - Klick auf „Größe“ sortiert erst aufsteigend, dann absteigend.
+## Schnellstart (Entwicklung)
 
-- **Echtzeit-Suche:**  
-  Filtere Dateien direkt beim Tippen – egal ob im Benutzerbereich oder im Admin‑Bereich.
+Voraussetzung: [Node.js](https://nodejs.org/) ≥ 22.5 (empfohlen 24).
 
-- **Admin-Bereich:**  
-  Ein geschützter Bereich ermöglicht:
-  - Dateiupload und Löschen
-  - Erweiterte Verwaltungsfunktionen
-  - Login-System (mit einfachem Passwortschutz)
+```bash
+git clone https://github.com/JulFoii/iso-share.git
+cd iso-share
+npm install
+npm start          # http://localhost:3000, Admin-Login unter /login
+npm test           # Unit- und Integrationstests
+npm run lint       # Syntax-Check aller JavaScript-Dateien
+```
 
-- **Modernes Design:**  
-  Einheitliches, helles Bootstrap‑Design (Weiß/hellgrau) mit klassischer Ästhetik, responsiv und benutzerfreundlich.
+Ohne `ADMIN_PASSWORD` wird beim ersten Start ein zufälliges Passwort erzeugt und einmalig im Log ausgegeben.
 
-- **Footer:**  
-  Der Footer bleibt stets am Seitenende, unabhängig von der Content‑Länge.
+## Produktivbetrieb
 
----
+```bash
+cp .env.example .env && chmod 600 .env   # DOMAIN, PUBLIC_URL, SMTP, … ausfüllen
+docker compose --profile tls up -d --build
+```
 
-## Installation
-
-### Voraussetzungen
-
-- **[Node.js](https://nodejs.org/)** (v14 oder höher) und **npm** ODER
-- **[Docker](https://www.docker.com/)** und **Docker Compose**
-
-### Setup
-
-#### Option 1: Standard Installation
-
-1. **Repository klonen:**
-
-   ```bash
-   git clone https://github.com/JulFoii/iso-share.git
-   cd iso-share
-   ```
-
-2. **Abhängigkeiten installieren:**
-
-   ```bash
-   npm install
-   ```
-
-3. **Uploads-Ordner ignorieren:**
-
-   Stelle sicher, dass der uploads-Ordner in der .gitignore eingetragen ist
-
-4. **Server starten:**
-
-   ```bash
-   node server.js
-   ```
-
-5. **Browser öffnen:**
-
-   Rufe http://localhost:3000 auf, um die Anwendung zu nutzen
-
-#### Option 2: Docker Installation
-
-1. **Repository klonen:**
-
-   ```bash
-   git clone https://github.com/JulFoii/iso-share.git
-   cd iso-share
-   ```
-
-2. **Mit Docker Compose starten:**
-
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **Browser öffnen:**
-
-   Rufe http://localhost:3000 auf, um die Anwendung zu nutzen
-
-#### Docker Befehle
-
-- **Container stoppen:** `docker-compose down`
-- **Logs anzeigen:** `docker-compose logs -f`
-- **Container neu erstellen:** `docker-compose up -d --build`
-- **Nur Docker (ohne Compose):**
-  ```bash
-  docker build -t iso-share .
-  docker run -d -p 3000:3000 -v $(pwd)/uploads:/app/uploads iso-share
-  ```
+Das startet die App hinter Caddy mit automatischem Let's-Encrypt-Zertifikat. Go-live-Checkliste, Backups (inklusive Offsite), Monitoring, Updates und Notfälle beschreibt **[OPERATIONS.md](OPERATIONS.md)**. Die Architektur und alle Umgebungsvariablen stehen in [CLAUDE.md](CLAUDE.md), die Änderungen in [CHANGELOG.md](CHANGELOG.md).

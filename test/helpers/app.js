@@ -28,6 +28,10 @@ async function startTestApp(overrides = {}) {
         maxFileSizeMb: 1,
         scanOnStart: false,
         sweepStaleUploads: false,
+        // Kein echter statfs-Check gegen das Temp-Volume der Testmaschine
+        // und kein stuendlicher Wartungstimer — beides testen eigene Faelle
+        minFreeDiskMb: 0,
+        maintenanceIntervalMs: 0,
         log: QUIET,
         ...overrides,
     });

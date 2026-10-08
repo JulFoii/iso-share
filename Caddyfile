@@ -1,0 +1,24 @@
+# TLS-Terminierung fuer ISO Share (docker compose --profile tls up -d).
+# Caddy holt und erneuert das Let's-Encrypt-Zertifikat fuer {$DOMAIN}
+# automatisch; Port 80 wird nur fuer die ACME-Challenge und die Umleitung
+# auf https gebraucht.
+#
+# Caddy vertraut eingehenden X-Forwarded-For-Headern nicht (keine
+# trusted_proxies) und setzt sie selbst neu — genau die Voraussetzung fuer
+# TRUST_PROXY=1 in der App (siehe CLAUDE.md, Abschnitt Login brute-force).
+
+{$DOMAIN} {
+	# Kein Body-Limit und kein Puffern: Uploads (bis MAX_FILE_SIZE_MB) und
+	# Downloads mehrerer GB laufen gestreamt durch
+	reverse_proxy iso-share:3000 {
+		flush_interval -1
+	}
+
+	# ISOs sind nicht komprimierbar; Text (HTML/CSS/JS/JSON) schon
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+}

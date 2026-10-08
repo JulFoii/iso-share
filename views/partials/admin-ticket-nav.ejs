@@ -1,0 +1,7 @@
+<nav class="tabs" aria-label="Ticketsystem">
+  <a class="tab" href="/admin/tickets" <%- current === 'inbox' ? 'aria-current="page"' : '' %>><%- include('icon', { name: 'inbox', size: 16 }) %> Posteingang</a>
+  <a class="tab" href="/admin/customers" <%- current === 'customers' ? 'aria-current="page"' : '' %>><%- include('icon', { name: 'users', size: 16 }) %> Kunden</a>
+  <a class="tab" href="/admin/kb" <%- current === 'kb' ? 'aria-current="page"' : '' %>><%- include('icon', { name: 'book', size: 16 }) %> Hilfeartikel</a>
+  <a class="tab" href="/admin/reports" <%- current === 'reports' ? 'aria-current="page"' : '' %>><%- include('icon', { name: 'chart', size: 16 }) %> Berichte</a>
+  <a class="tab" href="/admin/ticket-settings" <%- current === 'settings' ? 'aria-current="page"' : '' %>><%- include('icon', { name: 'settings', size: 16 }) %> Einstellungen &amp; E-Mail</a>
+</nav>

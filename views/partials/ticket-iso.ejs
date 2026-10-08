@@ -1,0 +1,42 @@
+<%
+/*
+ * ISO-Datei, auf die sich ein Ticket bezieht (tickets.iso_file), fuer die
+ * Seitenleiste der Ticket-Ansicht — Admin und Kunde. isoInfo kommt aus
+ * describe() in server.js (aktuelle Pruefsumme, Boot-Infos) oder ist null,
+ * wenn die Datei inzwischen geloescht wurde; der Name im Ticket bleibt.
+ * Der Live-Bereich "ticket-iso" sitzt aussen in den Ticket-Ansichten, damit
+ * er auch existiert, solange (noch) keine Datei zugeordnet ist.
+ */
+const isAdminView = typeof viewer !== 'undefined' && viewer === 'admin';
+%>
+<section class="card">
+  <div class="card__header"><h2 class="card__title"><%- include('icon', { name: 'disc', size: 15 }) %> Betroffene Datei</h2></div>
+  <div class="card__body stack stack--sm">
+    <p class="mono ticket-iso__name"><%= ticket.isoFile %></p>
+    <% if (!isoInfo) { %>
+      <p class="hint">Diese Datei ist nicht mehr vorhanden.</p>
+    <% } else { %>
+      <dl class="props props--compact">
+        <div><dt>Größe</dt><dd><%= formatSize(isoInfo.size) %></dd></div>
+        <% if (isoInfo.iso && isoInfo.iso.volumeId) { %><div><dt>Volume</dt><dd class="mono"><%= isoInfo.iso.volumeId %></dd></div><% } %>
+        <% if (isoInfo.iso) { %>
+          <div><dt>Bootfähig</dt><dd>
+            <% if (isoInfo.iso.bootable && isoInfo.iso.bootable.length) { %>
+              <% isoInfo.iso.bootable.forEach(platform => { %><span class="badge badge--ok"><%= platform %></span> <% }); %>
+            <% } else { %>nein<% } %>
+          </dd></div>
+        <% } %>
+        <div><dt>SHA-256</dt><dd>
+          <% if (isoInfo.sha256) { %>
+            <span class="mono ticket-iso__hash" title="<%= isoInfo.sha256 %>"><%= isoInfo.sha256.slice(0, 16) %>…</span>
+          <% } else { %>wird berechnet …<% } %>
+        </dd></div>
+      </dl>
+      <% if (isAdminView) { %>
+        <a class="btn btn--ghost btn--sm" href="/admin/tickets?view=all&amp;file=<%= encodeURIComponent(ticket.isoFile) %>"><%- include('icon', { name: 'ticket', size: 14 }) %> Alle Tickets zu dieser Datei</a>
+      <% } else { %>
+        <a class="btn btn--ghost btn--sm" href="/download/<%= encodeURIComponent(ticket.isoFile) %>" download><%- include('icon', { name: 'download', size: 14 }) %> Herunterladen</a>
+      <% } %>
+    <% } %>
+  </div>
+</section>

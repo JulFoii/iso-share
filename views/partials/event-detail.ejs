@@ -1,0 +1,78 @@
+<%#
+  Vollstaendige Details eines Events — eigene Seite (admin/log-event.ejs)
+  und Inhalt des <dialog> auf /admin/logs (GET /admin/logs/:id?partial=1).
+  Alles escaped ausgegeben, auch Payload und Stacktrace.
+%>
+<%
+  const actorLabels = { admin: 'Admin', customer: 'Kunde', token: 'API-Token', system: 'System', anonymous: 'anonym' };
+  const iso = new Date(event.ts).toISOString();
+  const payload = event.payload || null;
+  const changes = payload && payload.changes && typeof payload.changes === 'object' ? payload.changes : null;
+  const rest = payload ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'changes')) : null;
+  const duration = event.durationMs === null || event.durationMs === undefined ? null
+    : event.durationMs >= 1000 ? `${(event.durationMs / 1000).toFixed(2).replace('.', ',')} s`
+    : `${String(Math.round(event.durationMs * 10) / 10).replace('.', ',')} ms`;
+  const fmtValue = value => value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+%>
+<article class="event-detail">
+  <div class="event-detail__head">
+    <span class="sev sev--<%= event.severityKey %>"><%= event.severityLabel %></span>
+    <h3 class="event-detail__title"><%= event.event %></h3>
+    <% if (event.audit) { %><span class="badge badge--mono">audit</span><% } %>
+    <% if (event.outcome) { %><span class="badge <%= event.outcome === 'failure' ? 'badge--danger' : 'badge--ok' %>"><%= event.outcome === 'failure' ? 'fehlgeschlagen' : 'erfolgreich' %></span><% } %>
+  </div>
+
+  <% if (event.message) { %><p><%= event.message %></p><% } %>
+
+  <dl class="kv">
+    <dt>Zeitpunkt</dt>
+    <dd class="mono"><%= formatStamp(event.ts) %>.<%= String(event.ts % 1000).padStart(3, '0') %> <%= zoneName(event.ts) %><span class="event-detail__utc">UTC: <%= iso %></span></dd>
+    <dt>Event-ID</dt><dd class="mono">#<%= event.id %></dd>
+    <dt>Modul</dt><dd><a href="/admin/logs?range=all&amp;module=<%= encodeURIComponent(event.module) %>"><%= moduleLabels[event.module] || event.module %></a></dd>
+    <dt>Akteur</dt>
+    <dd><%= actorLabels[event.actorType] || '—' %><% if (event.actorId) { %> <span class="mono"><%= event.actorId %></span><% } %></dd>
+    <dt>IP-Adresse</dt>
+    <dd class="mono"><% if (event.ip) { %><a href="/admin/logs?range=all&amp;ip=<%= encodeURIComponent(event.ip) %>"><%= event.ip %></a><% } else { %>—<% } %></dd>
+    <dt>User-Agent</dt><dd class="mono"><%= event.userAgent || '—' %></dd>
+    <dt>Session</dt><dd class="mono" title="Gekürzter SHA-256 der Session-ID — die ID selbst wird nie gespeichert"><%= event.sessionHash || '—' %></dd>
+    <dt>Request-/Lauf-ID</dt>
+    <dd class="mono"><% if (event.requestId) { %><a href="/admin/logs?range=all&amp;req=<%= encodeURIComponent(event.requestId) %>"><%= event.requestId %></a> <span class="hint">(alle Events dazu)</span><% } else { %>—<% } %></dd>
+    <% if (event.method || event.path) { %><dt>Anfrage</dt><dd class="mono"><%= event.method || '' %> <%= event.path || '' %></dd><% } %>
+    <% if (event.status) { %><dt>HTTP-Status</dt><dd class="mono"><span class="status-code--<%= String(event.status)[0] %>"><%= event.status %></span></dd><% } %>
+    <% if (duration) { %><dt>Dauer</dt><dd class="mono"><%= duration %></dd><% } %>
+  </dl>
+
+  <% if (changes) { %>
+    <section>
+      <h4 class="detail-section__title">Änderungen (vorher → nachher)</h4>
+      <div class="detail-scroll">
+        <table class="table table--compact diff-table">
+          <thead><tr><th scope="col">Feld</th><th scope="col">Vorher</th><th scope="col">Nachher</th></tr></thead>
+          <tbody>
+            <% Object.entries(changes).forEach(([field, change]) => { %>
+              <tr>
+                <td><%= field %></td>
+                <td><%= fmtValue(change && change.from) %></td>
+                <td><%= fmtValue(change && change.to) %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  <% } %>
+
+  <% if (rest && Object.keys(rest).length > 0) { %>
+    <section>
+      <h4 class="detail-section__title">Payload (JSON)</h4>
+      <pre class="code-block"><%= JSON.stringify(rest, null, 2) %></pre>
+    </section>
+  <% } %>
+
+  <% if (event.errorStack) { %>
+    <section>
+      <h4 class="detail-section__title">Stacktrace</h4>
+      <pre class="code-block code-block--error"><%= event.errorStack %></pre>
+    </section>
+  <% } %>
+</article>

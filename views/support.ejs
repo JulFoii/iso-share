@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('partials/head', { title: 'Support', description: 'Hilfe zu ISO Share — Antworten auf häufige Fragen, Tickets anlegen und verfolgen.' }) %>
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('partials/navbar', { page: 'support' }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <header class="hero">
+      <p class="eyebrow">Support</p>
+      <h1 class="hero__title">Wie können wir helfen?</h1>
+      <p class="hero__text">
+        Viele Fragen sind schon beantwortet — such einfach danach. Findest du nichts Passendes, leg ein Ticket an:
+        Anhänge, Verlauf und jede Antwort an einem Ort, mit Benachrichtigung per E-Mail.
+      </p>
+      <div class="row hero__actions">
+        <% if (currentCustomer) { %>
+          <a class="btn btn--primary" href="/account/tickets/new"><%- include('partials/icon', { name: 'plus', size: 16 }) %> Neues Ticket</a>
+          <a class="btn btn--secondary" href="/account/tickets">Meine Tickets</a>
+        <% } else { %>
+          <a class="btn btn--primary" href="/account/register"><%- include('partials/icon', { name: 'user', size: 16 }) %> Konto erstellen</a>
+          <a class="btn btn--secondary" href="/account/login">Anmelden</a>
+        <% } %>
+      </div>
+    </header>
+
+    <form class="search kb-search" action="/support" method="GET" role="search">
+      <%- include('partials/icon', { name: 'search', size: 16, cls: 'search__icon' }) %>
+      <input class="input" type="search" name="q" value="<%= q %>" placeholder="Hilfe durchsuchen, z. B. „Checksumme prüfen“" aria-label="Hilfe durchsuchen">
+    </form>
+
+    <%# Artikel-Liste bzw. Suchtreffer: live, damit neu veroeffentlichte oder
+        zurueckgezogene Hilfeartikel ohne Neuladen erscheinen/verschwinden. %>
+    <div data-live-region="kb-articles">
+    <% if (results) { %>
+      <section class="card kb-results" aria-labelledby="results-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="results-heading"><%= results.length ? `${results.length} Treffer` : 'Keine Treffer' %> für „<%= q %>“</h2>
+          <a class="btn btn--ghost btn--sm" href="/support"><%- include('partials/icon', { name: 'x', size: 14 }) %> Zurücksetzen</a>
+        </div>
+        <div class="card__body">
+          <% if (results.length === 0) { %>
+            <p class="hint">Dazu gibt es noch keinen Artikel. <% if (currentCustomer) { %><a href="/account/tickets/new">Leg einfach ein Ticket an</a> — wir helfen gern.<% } else { %><a href="/account/login?next=%2Faccount%2Ftickets%2Fnew">Melde dich an</a> und leg ein Ticket an — wir helfen gern.<% } %></p>
+          <% } else { %>
+            <ul class="kb-list">
+              <% results.forEach(article => { %>
+                <li class="kb-list__item">
+                  <a class="kb-list__link" href="/support/articles/<%= article.slug %>">
+                    <span class="kb-list__title"><%= article.title %></span>
+                    <span class="kb-list__excerpt"><%= article.excerpt %></span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+    <% } else if (groups.length) { %>
+      <div class="kb-groups">
+        <% groups.forEach(group => { %>
+          <section class="card" aria-label="<%= group.name %>">
+            <div class="card__header"><h2 class="card__title"><%- include('partials/icon', { name: 'book', size: 15 }) %> <%= group.name %></h2></div>
+            <div class="card__body">
+              <ul class="kb-list">
+                <% group.articles.forEach(article => { %>
+                  <li class="kb-list__item">
+                    <a class="kb-list__link" href="/support/articles/<%= article.slug %>"><span class="kb-list__title"><%= article.title %></span></a>
+                  </li>
+                <% }); %>
+              </ul>
+            </div>
+          </section>
+        <% }); %>
+      </div>
+    <% } %>
+    </div>
+
+    <ul class="feature-grid">
+      <li class="feature">
+        <span class="feature__icon"><%- include('partials/icon', { name: 'ticket', size: 18 }) %></span>
+        <h2 class="feature__title">Alles an einem Ort</h2>
+        <p class="feature__text">Jede Anfrage bekommt eine Ticketnummer. Status und Verlauf siehst du jederzeit in deinem Konto.</p>
+      </li>
+      <li class="feature">
+        <span class="feature__icon"><%- include('partials/icon', { name: 'paperclip', size: 18 }) %></span>
+        <h2 class="feature__title">Anhänge</h2>
+        <p class="feature__text">Screenshots, PDFs und Logdateien direkt mitschicken — das spart Rückfragen.</p>
+      </li>
+      <li class="feature">
+        <span class="feature__icon"><%- include('partials/icon', { name: 'mail', size: 18 }) %></span>
+        <h2 class="feature__title">Per E-Mail informiert</h2>
+        <p class="feature__text">
+          Du bekommst eine Nachricht, sobald wir antworten<%= inboundEnabled ? ', und kannst direkt per E-Mail zurückschreiben' : '' %>.
+          <% if (mailTicketAddress) { %>
+            Mit Konto kannst du ein Ticket auch per Mail an <a class="mono" href="mailto:<%= mailTicketAddress %>"><%= mailTicketAddress %></a> eröffnen.
+          <% } %>
+        </p>
+      </li>
+    </ul>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

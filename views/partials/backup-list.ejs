@@ -1,0 +1,11 @@
+<%# Inhalt von #backupList: Zeilen plus Leerzustand. Eigenes Partial, weil
+    heartbeat.js die Liste ueber GET /admin/partials/listing nachgeliefert
+    bekommt (Live-Bereich "backups", siehe live-regions.js) — neue
+    Sicherungen aus dem Zeitplan erscheinen so ohne Neuladen. %>
+<%- include('backup-rows', { backups }) %>
+<% if (backups.length === 0) { %>
+  <li class="empty" data-backup-empty>
+    <p class="empty__title">Noch keine Sicherung</p>
+    <p class="empty__text">Läuft automatisch nach Zeitplan, oder jetzt manuell anstoßen.</p>
+  </li>
+<% } %>

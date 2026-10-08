@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: customer.name }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/admin/customers/<%= customer.id %>">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<%
+  const doneMessages = {
+    verify: 'E-Mail-Adresse wurde manuell bestätigt.',
+    disable: 'Konto gesperrt und auf allen Geräten abgemeldet.',
+    enable: 'Konto wieder freigegeben.',
+    resend: 'Bestätigungsmail wurde erneut verschickt.',
+  };
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <a class="back-link" href="/admin/customers"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Kunden</a>
+
+    <header class="page-header page-header--split">
+      <div class="person person--lg">
+        <span class="msg__avatar msg__avatar--customer" aria-hidden="true"><%= initials(customer.name) %></span>
+        <span class="person__text">
+          <h1 class="page-header__title" data-live-region="customer-name"><%= customer.name %></h1>
+          <span class="page-header__meta" data-live-region="customer-meta">
+            <a class="mono" href="mailto:<%= customer.email %>"><%= customer.email %></a>
+            <span>seit <%= formatDate(customer.createdAt) %></span>
+            <span>
+              <% if (customer.disabled) { %><span class="badge badge--danger">Gesperrt</span>
+              <% } else if (customer.emailVerified) { %><span class="badge badge--ok">Aktiv</span>
+              <% } else { %><span class="badge badge--warning">Unbestätigt</span><% } %>
+            </span>
+          </span>
+        </span>
+      </div>
+    </header>
+
+    <% if (doneMessages[done]) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: doneMessages[done] }) %></div><% } %>
+    <% if (error) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div><% } %>
+
+    <div class="ticket-layout">
+      <div class="ticket-layout__main">
+        <section class="card card--flush" data-live-region="customer-tickets" data-live-guard-hover>
+          <div class="card__header"><h2 class="card__title">Tickets (<%= tickets.length %>)</h2></div>
+          <% if (tickets.length === 0) { %>
+            <%# .card--flush nimmt .card__body das Padding — darum der
+                Leerzustand wie in den anderen Listen statt eines nackten Hinweises. %>
+            <div class="empty">
+              <div class="empty__icon"><%- include('../partials/icon', { name: 'ticket', size: 20 }) %></div>
+              <p class="empty__title">Noch keine Tickets</p>
+            </div>
+          <% } else { %>
+            <ul class="ticket-list">
+              <% tickets.forEach(ticket => { %>
+                <li data-live-key="ticket-<%= ticket.number %>">
+                  <a class="ticket-item<%= ticket.adminUnread ? ' is-unread' : '' %>" href="/admin/tickets/<%= ticket.number %>">
+                    <span class="ticket-item__dot" aria-hidden="true"></span>
+                    <span class="ticket-item__main">
+                      <span class="ticket-item__subject"><span class="mono text-muted">#<%= ticket.number %></span> <%= ticket.subject %></span>
+                      <span class="ticket-item__meta">
+                        <span>erstellt <%= formatDate(ticket.createdAt) %></span>
+                        <span>aktualisiert <%= relativeTime(ticket.updatedAt) %></span>
+                        <% if (ticket.rating) { %><span><%= ticket.rating %> ★</span><% } %>
+                      </span>
+                    </span>
+                    <span class="ticket-item__side"><%- include('../partials/ticket-status-badge', { ticket, viewer: 'admin' }) %></span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </section>
+      </div>
+
+      <aside class="ticket-layout__aside">
+        <section class="card" data-live-region="customer-account">
+          <div class="card__header"><h2 class="card__title">Konto</h2></div>
+          <dl class="props">
+            <div><dt>E-Mail bestätigt</dt><dd><%= customer.emailVerifiedAt ? formatDateTime(customer.emailVerifiedAt) : 'nein' %></dd></div>
+            <div><dt>Letzte Anmeldung</dt><dd><%= customer.lastLoginAt ? formatDateTime(customer.lastLoginAt) : '—' %></dd></div>
+            <div><dt>Benachrichtigungen</dt><dd>
+              <%= [customer.notify.replies && 'Antworten', customer.notify.status && 'Status', customer.notify.reminders && 'Erinnerungen'].filter(Boolean).join(', ') || 'keine' %>
+            </dd></div>
+          </dl>
+          <div class="card__footer card__footer--stack">
+            <% if (customer.emailVerified && !customer.disabled) { %>
+              <a class="btn btn--primary btn--sm btn--block" href="/admin/tickets/new?customer=<%= customer.id %>"><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Neues Ticket anlegen</a>
+            <% } %>
+            <% if (!customer.emailVerified) { %>
+              <form action="/admin/customers/<%= customer.id %>/verify" method="POST">
+                <button type="submit" class="btn btn--secondary btn--sm btn--block"><%- include('../partials/icon', { name: 'checkCircle', size: 14 }) %> Adresse manuell bestätigen</button>
+              </form>
+              <% if (mailEnabled) { %>
+                <form action="/admin/customers/<%= customer.id %>/resend" method="POST">
+                  <button type="submit" class="btn btn--ghost btn--sm btn--block"><%- include('../partials/icon', { name: 'mail', size: 14 }) %> Bestätigungsmail erneut senden</button>
+                </form>
+              <% } %>
+            <% } %>
+            <% if (customer.disabled) { %>
+              <form action="/admin/customers/<%= customer.id %>/enable" method="POST">
+                <button type="submit" class="btn btn--secondary btn--sm btn--block">Konto freigeben</button>
+              </form>
+            <% } else { %>
+              <form action="/admin/customers/<%= customer.id %>/disable" method="POST"
+                data-confirm="<%= customer.email %> kann sich danach nicht mehr anmelden, alle offenen Sitzungen werden beendet. Freigeben geht jederzeit wieder."
+                data-confirm-title="Konto sperren?" data-confirm-ok="Sperren">
+                <button type="submit" class="btn btn--danger-ghost btn--sm btn--block"><%- include('../partials/icon', { name: 'shield', size: 14 }) %> Konto sperren</button>
+              </form>
+            <% } %>
+          </div>
+        </section>
+
+        <details class="card danger-zone" <%= error ? 'open' : '' %>>
+          <summary class="card__header"><span class="card__title">Konto löschen</span></summary>
+          <form class="card__body stack stack--sm" action="/admin/customers/<%= customer.id %>/delete" method="POST"
+            data-confirm="Das Konto wird samt aller Tickets, Nachrichten und Anhänge endgültig gelöscht (DSGVO-Löschung). Das lässt sich nicht zurücknehmen."
+            data-confirm-title="Kundenkonto löschen?" data-confirm-ok="Endgültig löschen"
+            data-confirm-type="<%= customer.email %>" data-confirm-type-label="Zur Bestätigung die E-Mail-Adresse eingeben">
+            <p class="hint">Löscht das Konto samt aller Tickets, Nachrichten und Anhänge endgültig (DSGVO-Löschung).</p>
+            <div class="field" data-confirm-inline>
+              <label class="label" for="customer-delete">Zur Bestätigung die E-Mail-Adresse eingeben</label>
+              <input class="input input--sm" id="customer-delete" name="confirm" autocomplete="off" required>
+            </div>
+            <button type="submit" class="btn btn--danger btn--sm"><%- include('../partials/icon', { name: 'trash', size: 14 }) %> Endgültig löschen</button>
+          </form>
+        </details>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

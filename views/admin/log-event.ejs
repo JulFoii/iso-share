@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: `Event #${event.id}`, stylesheets: ['/css/events.css'] }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-logs', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container">
+    <a class="back-link" href="/admin/logs"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Zurück zum Event-Log</a>
+    <div class="card mt-4">
+      <div class="card__body">
+        <%- include('../partials/event-detail', { event, moduleLabels }) %>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<%# Nur fuer den Ticket-Zaehler der Navigation (GET /partials/nav) %>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

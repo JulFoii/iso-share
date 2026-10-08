@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Kundenkonto · Anmelden', description: 'Im Support-Portal von ISO Share anmelden.' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<%- include('../partials/navbar', { page: 'support' }) %>
+
+<main class="auth" id="main">
+  <div class="auth__card">
+    <div class="auth__head">
+      <span class="auth__logo"><%- include('../partials/icon', { name: 'message', size: 18 }) %></span>
+      <h1 class="auth__title">Support-Portal</h1>
+      <p class="auth__subtitle">Melde dich an, um deine Tickets zu sehen und neue anzulegen.</p>
+    </div>
+
+    <div class="card">
+      <div class="card__body stack stack--sm">
+        <% if (reset) { %>
+          <%- include('../partials/alert', { variant: 'success', text: 'Passwort geändert — du kannst dich jetzt anmelden.' }) %>
+        <% } %>
+        <% if (error) { %>
+          <%- include('../partials/alert', { variant: 'danger', text: error }) %>
+        <% } %>
+        <% if (unverifiedEmail) { %>
+          <form action="/account/resend-verification" method="POST" class="row">
+            <input type="hidden" name="email" value="<%= unverifiedEmail %>">
+            <button type="submit" class="btn btn--secondary btn--sm">Bestätigungslink erneut senden</button>
+          </form>
+        <% } %>
+
+        <form class="stack stack--sm" action="/account/login" method="POST">
+          <input type="hidden" name="next" value="<%= next %>">
+          <div class="field">
+            <label class="label" for="email">E-Mail-Adresse</label>
+            <input class="input" type="email" id="email" name="email" value="<%= email %>" autocomplete="email" required autofocus>
+          </div>
+          <div class="field">
+            <div class="row row--between">
+              <label class="label" for="password">Passwort</label>
+              <a class="hint" href="/account/forgot">Passwort vergessen?</a>
+            </div>
+            <div class="password">
+              <input class="input" type="password" id="password" name="password" autocomplete="current-password" required>
+              <button type="button" class="password__toggle" data-password-toggle="password" aria-label="Passwort anzeigen">
+                <svg data-password-icon="show" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg data-password-icon="hide" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M4 4l16 16"/><path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.5 7.3A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 3.9-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+              </button>
+            </div>
+          </div>
+          <button type="submit" class="btn btn--primary btn--block">Anmelden</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="auth__footer">Noch kein Konto? <a href="/account/register">Jetzt registrieren</a></p>
+  </div>
+</main>
+
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/password-toggle.js') %>" defer></script>
+</body>
+</html>

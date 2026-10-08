@@ -1,0 +1,8 @@
+<%
+/*
+ * Status-Badge eines Tickets. viewer 'customer' benutzt die Kundensicht der
+ * Labels ("Wartet auf dich" statt "Wartet auf Kunde"). Wird auch per
+ * Live-Update (…/updates) als Fragment nachgeliefert.
+ */
+const badgeLabels = (typeof viewer !== 'undefined' && viewer === 'customer') ? customerStatusLabels : statusLabels;
+%><span class="status status--<%= ticket.status %>" data-ticket-status><span class="status__dot" aria-hidden="true"></span><%= badgeLabels[ticket.status] %></span>

@@ -1,0 +1,6 @@
+<%
+/* Nur die Schleife ueber `backups`, analog zu partials/token-rows. */
+%>
+<% backups.forEach(backup => { %>
+  <%- include('backup-row', { backup }) %>
+<% }); %>

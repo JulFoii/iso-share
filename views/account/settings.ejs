@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Konto' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/account/settings">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'account-settings' }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <header class="page-header">
+      <h1 class="page-header__title">Mein Konto</h1>
+      <p class="page-header__meta" data-live-region="account-meta">
+        <span class="mono"><%= customer.email %></span>
+        <span>Mitglied seit <%= formatDate(customer.createdAt) %></span>
+      </p>
+    </header>
+
+    <% if (success) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: success }) %></div><% } %>
+    <% if (pendingEmail) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'info', text: 'Falls die neue Adresse noch nicht vergeben ist, haben wir dorthin einen Bestätigungslink geschickt. Bis zur Bestätigung gilt deine bisherige Adresse.' }) %></div>
+    <% } %>
+
+    <div class="stack">
+      <section class="card" id="profile" aria-labelledby="profile-heading">
+        <div class="card__header"><h2 class="card__title" id="profile-heading">Profil</h2></div>
+        <form class="card__body stack stack--sm" action="/account/settings/profile" method="POST">
+          <% if (errors.profile) { %><%- include('../partials/alert', { variant: 'danger', text: errors.profile }) %><% } %>
+          <div class="field">
+            <label class="label" for="name">Name</label>
+            <input class="input" type="text" id="name" name="name" value="<%= customer.name %>" maxlength="80" autocomplete="name" required>
+            <span class="hint">So sprechen wir dich in Antworten und E-Mails an.</span>
+          </div>
+          <div><button type="submit" class="btn btn--secondary">Speichern</button></div>
+        </form>
+      </section>
+
+      <section class="card" id="email" aria-labelledby="email-heading">
+        <div class="card__header"><h2 class="card__title" id="email-heading">E-Mail-Adresse ändern</h2></div>
+        <form class="card__body stack stack--sm" action="/account/settings/email" method="POST">
+          <% if (errors.email) { %><%- include('../partials/alert', { variant: 'danger', text: errors.email }) %><% } %>
+          <% if (!mailEnabled) { %>
+            <%- include('../partials/alert', { variant: 'info', text: 'Auf diesem Server ist kein Mailversand eingerichtet — ein Adresswechsel ist deshalb gerade nicht möglich.' }) %>
+          <% } %>
+          <div class="grid-2">
+            <div class="field">
+              <label class="label" for="newEmail">Neue Adresse</label>
+              <input class="input" type="email" id="newEmail" name="email" autocomplete="email" required <%= mailEnabled ? '' : 'disabled' %>>
+            </div>
+            <div class="field">
+              <label class="label" for="emailPassword">Aktuelles Passwort</label>
+              <input class="input" type="password" id="emailPassword" name="currentPassword" autocomplete="current-password" required <%= mailEnabled ? '' : 'disabled' %>>
+            </div>
+          </div>
+          <span class="hint">Wir schicken einen Bestätigungslink an die neue Adresse. Erst danach wird sie aktiv.</span>
+          <div><button type="submit" class="btn btn--secondary" <%= mailEnabled ? '' : 'disabled' %>>Bestätigungslink senden</button></div>
+        </form>
+      </section>
+
+      <section class="card" id="password" aria-labelledby="password-heading">
+        <div class="card__header"><h2 class="card__title" id="password-heading">Passwort ändern</h2></div>
+        <form class="card__body stack stack--sm" action="/account/settings/password" method="POST">
+          <% if (errors.password) { %><%- include('../partials/alert', { variant: 'danger', text: errors.password }) %><% } %>
+          <div class="field">
+            <label class="label" for="currentPassword">Aktuelles Passwort</label>
+            <input class="input" type="password" id="currentPassword" name="currentPassword" autocomplete="current-password" required>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label class="label" for="newPassword">Neues Passwort</label>
+              <input class="input" type="password" id="newPassword" name="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+            </div>
+            <div class="field">
+              <label class="label" for="newPasswordConfirm">Wiederholen</label>
+              <input class="input" type="password" id="newPasswordConfirm" name="passwordConfirm" minlength="10" maxlength="200" autocomplete="new-password" required>
+            </div>
+          </div>
+          <span class="hint">Andere angemeldete Geräte werden danach abgemeldet.</span>
+          <div><button type="submit" class="btn btn--secondary">Passwort ändern</button></div>
+        </form>
+      </section>
+
+      <section class="card" id="notifications" aria-labelledby="notifications-heading">
+        <div class="card__header"><h2 class="card__title" id="notifications-heading">E-Mail-Benachrichtigungen</h2></div>
+        <form class="card__body stack stack--sm" action="/account/settings/notifications" method="POST">
+          <% if (!mailEnabled) { %>
+            <%- include('../partials/alert', { variant: 'info', text: 'Auf diesem Server ist gerade kein Mailversand eingerichtet — neue Antworten siehst du unter „Meine Tickets“. Deine Auswahl gilt, sobald Mails verschickt werden.' }) %>
+          <% } %>
+          <label class="switch-row">
+            <input class="switch" type="checkbox" name="replies" value="1" <%= customer.notify.replies ? 'checked' : '' %>>
+            <span><strong>Neue Antworten</strong><span class="hint">Wenn der Support auf eines deiner Tickets antwortet.</span></span>
+          </label>
+          <label class="switch-row">
+            <input class="switch" type="checkbox" name="status" value="1" <%= customer.notify.status ? 'checked' : '' %>>
+            <span><strong>Statusänderungen</strong><span class="hint">Wenn ein Ticket gelöst, geschlossen oder wieder geöffnet wird.</span></span>
+          </label>
+          <label class="switch-row">
+            <input class="switch" type="checkbox" name="reminders" value="1" <%= customer.notify.reminders ? 'checked' : '' %>>
+            <span><strong>Erinnerungen</strong><span class="hint">Wenn wir länger auf deine Antwort warten.</span></span>
+          </label>
+          <p class="hint">Sicherheitsrelevante E-Mails (Bestätigung, Passwort zurücksetzen) bekommst du immer.</p>
+          <div><button type="submit" class="btn btn--secondary">Speichern</button></div>
+        </form>
+      </section>
+
+      <section class="card card--danger" id="privacy" aria-labelledby="privacy-heading">
+        <div class="card__header"><h2 class="card__title" id="privacy-heading">Daten &amp; Löschung</h2></div>
+        <div class="card__body stack stack--sm">
+          <div class="row row--between">
+            <div>
+              <strong>Datenexport</strong>
+              <p class="hint">Alle deine Kontodaten, Tickets und Nachrichten als JSON-Datei.</p>
+            </div>
+            <a class="btn btn--secondary btn--sm" href="/account/export"><%- include('../partials/icon', { name: 'download', size: 14 }) %> Herunterladen</a>
+          </div>
+          <hr class="divider">
+          <details class="disclosure" <%= errors.delete ? 'open' : '' %>>
+            <summary class="disclosure__summary"><strong>Konto löschen</strong><%- include('../partials/icon', { name: 'chevronRight', size: 14, cls: 'disclosure__chevron' }) %></summary>
+          <form class="stack stack--sm disclosure__body" action="/account/delete" method="POST"
+            data-confirm="Dein Konto und alle Tickets, Nachrichten und Anhänge werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden."
+            data-confirm-title="Konto endgültig löschen?" data-confirm-ok="Konto löschen"
+            data-confirm-type="LÖSCHEN" data-confirm-type-label="Zur Bestätigung LÖSCHEN eingeben">
+            <% if (errors.delete) { %><%- include('../partials/alert', { variant: 'danger', text: errors.delete }) %><% } %>
+            <p class="hint">Löscht dein Konto und alle Tickets, Nachrichten und Anhänge endgültig. Das kann nicht rückgängig gemacht werden.</p>
+            <div class="grid-2">
+              <div class="field" data-confirm-inline>
+                <label class="label" for="deleteConfirm">Zur Bestätigung <strong>LÖSCHEN</strong> eingeben</label>
+                <input class="input" type="text" id="deleteConfirm" name="confirm" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label class="label" for="deletePassword">Passwort</label>
+                <input class="input" type="password" id="deletePassword" name="currentPassword" autocomplete="current-password" required>
+              </div>
+            </div>
+            <div><button type="submit" class="btn btn--danger">Konto endgültig löschen</button></div>
+          </form>
+          </details>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

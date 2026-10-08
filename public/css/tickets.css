@@ -1,0 +1,2301 @@
+/*
+ * Ticketsystem: Kundenportal (/support, /account/*) und Admin-Posteingang
+ * (/admin/tickets, /admin/customers, /admin/ticket-settings). Baut auf den
+ * Tokens aus tokens.css und den Grundbausteinen aus main.css (card, btn,
+ * input, badge, alert, tabs …) auf — hier stehen nur die zusaetzlichen
+ * Komponenten. Eigene Datei, damit main.css ueberschaubar bleibt.
+ */
+
+/* ==========================================================================
+   Kleine Helfer
+   ========================================================================== */
+
+.icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+
+.stack--sm {
+  gap: var(--space-3);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+/* Unterschiedlich lange (umbrechende) Labels: Eingabefelder trotzdem auf
+   einer Linie. */
+.grid-2--end {
+  align-items: end;
+}
+
+.mb-2 {
+  margin-bottom: var(--space-2);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.badge--danger {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-2) 0;
+}
+
+kbd {
+  display: inline-block;
+  padding: 0 0.35em;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.textarea {
+  height: auto;
+  min-height: 6rem;
+  padding-block: var(--space-2);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+select.input {
+  padding-right: var(--space-6);
+}
+
+.btn.is-busy {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--text);
+}
+
+.page-header--split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.card__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.card__footer--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.card--muted {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.card--danger {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+
+.nav__count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-left: var(--space-1);
+  padding-inline: 0.3rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--btn-primary-fg);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Formular-Elemente: Checkbox-Zeile, Auswahl-Chips, Schalter
+   ========================================================================== */
+
+fieldset.field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+fieldset.field > legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inline-form .input {
+  width: min(20rem, 100%);
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.check input {
+  margin-top: 0.2em;
+  accent-color: var(--accent);
+}
+
+.check--compact {
+  align-items: center;
+}
+
+/* Nachrichtenauswahl beim Aufteilen (admin/ticket.ejs) — lange Verlaeufe
+   scrollen in der Karte statt die Seitenleiste zu sprengen. */
+.split-list {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.split-list__item > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.split-list__excerpt {
+  overflow-wrap: anywhere;
+}
+
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.choice {
+  position: relative;
+}
+
+.choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+}
+
+.choice span {
+  display: inline-flex;
+  align-items: center;
+  height: 2.375rem;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.choice input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text);
+}
+
+.choice input:focus-visible + span {
+  box-shadow: var(--ring);
+}
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.switch-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: var(--text-sm);
+}
+
+.switch {
+  appearance: none;
+  flex-shrink: 0;
+  position: relative;
+  width: 2.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(1.25rem - 4px);
+  height: calc(1.25rem - 4px);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: translate var(--transition);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  translate: 1rem 0;
+}
+
+.switch:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* ==========================================================================
+   Auth-Seiten (Kundenkonto) und Hinweisseite
+   ========================================================================== */
+
+.auth__card--wide {
+  width: min(30rem, 100%);
+}
+
+.auth__footer {
+  margin-top: var(--space-4);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5);
+  text-align: center;
+}
+
+.notice__icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.notice__icon--success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.notice__icon--danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.notice__title {
+  font-size: var(--text-xl);
+}
+
+.notice__text {
+  max-width: 26rem;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   Support-Startseite
+   ========================================================================== */
+
+.hero {
+  padding-block: var(--space-4) var(--space-7);
+  text-align: center;
+}
+
+.hero__title {
+  margin-top: var(--space-2);
+  font-size: clamp(var(--text-2xl), 5vw, 2.75rem);
+  letter-spacing: var(--tracking-tighter);
+}
+
+.hero__text {
+  max-width: 34rem;
+  margin: var(--space-4) auto 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.hero__actions {
+  justify-content: center;
+  margin-top: var(--space-5);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-4);
+  list-style: none;
+  padding: 0;
+}
+
+.feature {
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.feature__icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.feature__title {
+  font-size: var(--text-base);
+}
+
+.feature__text {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+/* ==========================================================================
+   Status, Prioritaet, Tags
+   ========================================================================== */
+
+.status {
+  --status-color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--status-color) 30%, var(--border));
+  background: color-mix(in oklab, var(--status-color) 12%, transparent);
+  color: var(--status-color);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status__dot {
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status--new {
+  --status-color: var(--accent);
+}
+
+.status--open {
+  --status-color: var(--warning);
+}
+
+.status--pending {
+  --status-color: light-dark(oklch(50% 0.12 230), oklch(76% 0.11 230));
+}
+
+.status--resolved {
+  --status-color: var(--success);
+}
+
+.status--closed {
+  --status-color: var(--text-subtle);
+}
+
+.priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.priority__bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 0.75rem;
+}
+
+.priority__bars i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--border-strong);
+}
+
+.priority__bars i:nth-child(1) { height: 40%; }
+.priority__bars i:nth-child(2) { height: 70%; }
+.priority__bars i:nth-child(3) { height: 100%; }
+
+.priority--low .priority__bars i:nth-child(1),
+.priority--normal .priority__bars i:nth-child(-n + 2) {
+  background: var(--text-muted);
+}
+
+.priority--high {
+  color: var(--warning);
+}
+
+.priority--high .priority__bars i {
+  background: var(--warning);
+}
+
+.priority--urgent {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.priority--urgent .priority__bars i {
+  background: var(--danger);
+}
+
+.tag-mini {
+  padding: 0 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Toolbar, Segmented Control, Callout, Pagination
+   ========================================================================== */
+
+.list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.page-header__lead {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.text-strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.search--compact {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 3px);
+  background: var(--surface-sunken);
+}
+
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.375rem var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+
+.segmented__item:hover {
+  color: var(--text);
+}
+
+.segmented__item[aria-current="page"] {
+  background: var(--surface-hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-sm);
+}
+
+.segmented__item[aria-current="page"] .segmented__count {
+  color: var(--accent);
+}
+
+.segmented__count {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.callout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.callout:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.callout__arrow {
+  margin-left: auto;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.pagination [aria-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.pagination__info {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Ticket-Liste (Kunde) und Posteingang (Admin)
+   ========================================================================== */
+
+.ticket-list {
+  list-style: none;
+  padding: 0;
+}
+
+.ticket-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.ticket-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--transition);
+}
+
+.ticket-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.ticket-item__dot {
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.45rem;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.is-unread .ticket-item__dot {
+  background: var(--accent);
+}
+
+.ticket-item__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ticket-item__subject {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.is-unread .ticket-item__subject {
+  font-weight: 650;
+}
+
+.ticket-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
+.ticket-item__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.ticket-item__time {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kunde ist am Zug: dezenter Akzentstreifen links */
+.ticket-item.is-waiting {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.ticket-item__new {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.ticket-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  transition: background var(--transition);
+}
+
+.ticket-row__select {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: calc(var(--space-4) + 0.25rem) 0 0 var(--space-5);
+  accent-color: var(--accent);
+}
+
+.ticket-row__link {
+  flex: 1;
+  min-width: 0;
+  padding-left: var(--space-3);
+}
+
+.ticket-item__meta .priority {
+  font-weight: 500;
+}
+
+.ticket-row:has(.ticket-row__select:checked) {
+  background: var(--accent-subtle);
+}
+
+
+/* ==========================================================================
+   Admin: Kennzahlen, Posteingang mit Ansichten, Filter
+   ========================================================================== */
+
+.kpis {
+  display: grid;
+  /* 7.5rem statt 9.5rem: auf dem Handy (~290 px Kartenbreite) passen so
+     zwei Kacheln nebeneinander statt vier einzeln untereinander. */
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: var(--space-3);
+  margin-block: var(--space-5);
+}
+
+.kpis--inline {
+  margin-block: 0;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+a.kpi:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.kpi--alert {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+.kpi--alert .kpi__value {
+  color: var(--danger);
+}
+
+.kpi__label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.kpi__value {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi__value--sm {
+  font-size: var(--text-lg);
+}
+
+.kpi__sub {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+
+.live-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  font-size: var(--text-sm);
+}
+
+.live-banner .btn {
+  margin-left: auto;
+}
+
+.inbox {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.inbox__nav {
+  position: sticky;
+  top: calc(var(--nav-height) + var(--space-4));
+}
+
+.view-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.view-list__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+
+.view-list__item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.view-list__item[aria-current="page"] {
+  background: var(--accent-subtle);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.view-list__item[aria-current="page"] .icon {
+  color: var(--accent);
+}
+
+.view-list__count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.filters select {
+  width: auto;
+}
+
+.filters__search {
+  flex: 1 1 14rem;
+  max-width: none;
+}
+
+.inbox__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.inbox__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.inbox__bulk {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* composer.js setzt .js-bulk: dann erscheinen die Sammelaktionen erst, wenn
+   etwas ausgewaehlt ist. Ohne JS bleiben sie immer sichtbar. */
+.js-bulk .inbox__bulk:not(.is-active) {
+  display: none;
+}
+
+.js-autosubmit [data-autosubmit-button] {
+  display: none;
+}
+
+.inbox__bulk select {
+  width: auto;
+}
+
+/* ==========================================================================
+   Ticket-Detail: Kopf, Fortschritt, Layout, Eigenschaften
+   ========================================================================== */
+
+.ticket-head {
+  margin-bottom: var(--space-5);
+}
+
+.ticket-head__number {
+  font-size: var(--text-sm);
+  color: var(--text-subtle);
+}
+
+.ticket-head__title {
+  margin-top: var(--space-1);
+  font-size: var(--text-2xl);
+  letter-spacing: var(--tracking-tighter);
+  overflow-wrap: anywhere;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.ticket-meta__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.stepper {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin-bottom: var(--space-5);
+  counter-reset: step;
+}
+
+.stepper__step {
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-subtle);
+}
+
+.stepper__step + .stepper__step {
+  flex: 1;
+}
+
+.stepper__step + .stepper__step::before {
+  content: "";
+  flex: 1 1 2rem;
+  min-width: 1.5rem;
+  height: 2px;
+  margin-inline: var(--space-1) var(--space-2);
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.stepper__step.is-done + .stepper__step.is-done::before {
+  background: var(--success);
+}
+
+.stepper__marker {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.stepper__step.is-done {
+  color: var(--text-muted);
+}
+
+.stepper__step.is-done .stepper__marker {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--btn-primary-fg);
+}
+
+.stepper__step.is-current {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.stepper__step.is-current:not(.is-done) .stepper__marker {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.ticket-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.ticket-layout__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.ticket-layout__aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: sticky;
+  top: calc(var(--nav-height) + var(--space-4));
+}
+
+/* Huelle eines Live-Bereichs, die selbst keine Box erzeugt: die Karte darin
+   ist ein direktes Flex-Kind der Seitenleiste, und eine leere Huelle (Ticket
+   ohne ISO-Datei) kostet keinen zusaetzlichen Abstand. */
+.live-slot {
+  display: contents;
+}
+
+.props {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.props > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+}
+
+.props > div + div {
+  border-top: 1px solid var(--border);
+}
+
+.props dt {
+  color: var(--text-muted);
+}
+
+.props dd {
+  margin: 0;
+  text-align: right;
+}
+
+/* Freitext unter einer props-Liste (Bewertungskommentar) — buendig mit
+   ihr statt als eigener, voll gepolsterter Kartenkoerper. */
+.props__note {
+  padding: 0 var(--space-5) var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.props--compact {
+  padding: 0;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.person__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.person--lg .msg__avatar {
+  width: 3rem;
+  height: 3rem;
+  font-size: var(--text-lg);
+}
+
+.mini-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+/* Betreff links (bricht um), Status-Badge immer rechts daneben, eine
+   optionale Meta-Zeile (.hint: Kunde · Zeit, Verwaltungs-Dashboard) unter
+   dem Betreff — statt dass sich drei Spalten die Breite teilen oder der
+   Badge allein in die naechste Zeile rutscht. */
+.mini-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-2);
+  align-items: start;
+}
+
+.mini-list a {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mini-list .hint {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.mini-list .status {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.disclosure__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosure__summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure__chevron {
+  color: var(--text-subtle);
+  transition: rotate var(--transition);
+}
+
+.disclosure[open] .disclosure__chevron {
+  rotate: 90deg;
+}
+
+.disclosure__body {
+  margin-top: var(--space-3);
+}
+
+.danger-zone summary {
+  cursor: pointer;
+  list-style: none;
+  border-bottom: none;
+}
+
+.danger-zone summary::-webkit-details-marker {
+  display: none;
+}
+
+.danger-zone[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.danger-zone summary .card__title {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+/* ==========================================================================
+   Verlauf: Nachrichten, Ereignisse, Anhaenge
+   ========================================================================== */
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: min(46rem, 92%);
+  border-radius: var(--radius-lg);
+  transition: background var(--transition);
+}
+
+.msg--mine {
+  flex-direction: row-reverse;
+  align-self: flex-end;
+}
+
+.msg__avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.msg__avatar--admin {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border-color: transparent;
+}
+
+.msg__avatar--customer {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+.msg__bubble {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.msg--mine .msg__bubble {
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--accent) 7%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+.msg--note .msg__bubble {
+  background: var(--warning-subtle);
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-style: dashed;
+}
+
+.msg__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
+.msg__author {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.msg__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+}
+
+.msg__tag--note {
+  background: color-mix(in oklab, var(--warning) 22%, transparent);
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.msg__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-base);
+  line-height: 1.6;
+}
+
+.msg__images,
+.msg__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  list-style: none;
+  padding: 0;
+}
+
+.file-thumb {
+  display: flex;
+  flex-direction: column;
+  width: 9.5rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: border-color var(--transition);
+}
+
+.file-thumb:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.file-thumb img {
+  width: 100%;
+  height: 6.5rem;
+  object-fit: cover;
+  background: repeating-conic-gradient(var(--surface-hover) 0 25%, transparent 0 50%) 0 0 / 12px 12px;
+}
+
+.file-thumb__name {
+  padding: 0.3125rem var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 16rem;
+  padding: 0.3125rem var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--text-xs);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.file-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.file-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip__size {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+
+.msg-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  text-align: center;
+}
+
+.msg-event::before,
+.msg-event::after {
+  content: "";
+  flex: 1 1 2rem;
+  max-width: 6rem;
+  height: 1px;
+  background: var(--border);
+}
+
+.msg-event--internal {
+  font-style: italic;
+}
+
+.msg.is-updated,
+.msg-event.is-updated {
+  background: var(--accent-subtle);
+  box-shadow: 0 0 0 6px var(--accent-subtle);
+}
+
+/* ==========================================================================
+   Composer (Antwort / interne Notiz) und Anhaenge
+   ========================================================================== */
+
+.composer {
+  scroll-margin-top: calc(var(--nav-height) + var(--space-4));
+}
+
+.composer__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.composer__tab {
+  position: relative;
+}
+
+.composer__tab input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+}
+
+.composer__tab span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.composer__tab input:checked + span {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.composer__tab--note input:checked + span {
+  border-bottom-color: var(--warning);
+}
+
+.composer__tab input:focus-visible + span {
+  box-shadow: var(--ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Textbausteine + Hilfeartikel als eine Gruppe rechts neben den Reitern —
+   einzeln mit margin-left: auto brach jede Auswahl in eine eigene Zeile um. */
+.composer__tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-left: auto;
+  margin-bottom: var(--space-2);
+}
+
+.composer__canned {
+  width: auto;
+}
+
+/* Strg+Enter gibt es auf Touch-Geraeten ohne Tastatur nicht. */
+@media (hover: none) and (pointer: coarse) {
+  .composer__kbd {
+    display: none;
+  }
+}
+
+.composer__note-hint,
+.composer__submit-note {
+  display: none;
+}
+
+/* :has() schaltet die Notiz-Optik rein per CSS um — funktioniert damit auch
+   ohne composer.js, sobald der Browser :has() kann. */
+.composer:has(input[name="mode"][value="note"]:checked) {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.composer:has(input[name="mode"][value="note"]:checked) .card__body {
+  background: var(--warning-subtle);
+}
+
+.composer:has(input[name="mode"][value="note"]:checked) .composer__note-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warning);
+}
+
+.composer:has(input[name="mode"][value="note"]:checked) .composer__reply-hint,
+.composer:has(input[name="mode"][value="note"]:checked) .composer__submit-reply {
+  display: none;
+}
+
+.composer:has(input[name="mode"][value="note"]:checked) .composer__submit-note {
+  display: inline;
+}
+
+/* Dasselbe ohne :has() (aeltere Browser) ueber das data-mode, das
+   composer.js setzt — eigene Regeln, weil ein unbekannter Selektor in einer
+   Liste die ganze Regel ungueltig machen wuerde. */
+.composer[data-mode="note"] {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.composer[data-mode="note"] .card__body {
+  background: var(--warning-subtle);
+}
+
+.composer[data-mode="note"] .composer__note-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warning);
+}
+
+.composer[data-mode="note"] .composer__reply-hint,
+.composer[data-mode="note"] .composer__submit-reply {
+  display: none;
+}
+
+.composer[data-mode="note"] .composer__submit-note {
+  display: inline;
+}
+
+.composer__reply-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.reply-template {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.reply-template__preview {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+}
+
+.composer__status select {
+  width: auto;
+}
+
+.attach__zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.attach__zone:hover,
+.attach__zone:focus-within,
+.attach__zone.is-dragover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text);
+}
+
+.attach__hint {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
+.attach__input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.attach__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.attach__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+
+.attach__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach__size {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
+/* ==========================================================================
+   Bewertung (Sterne als Radio-Buttons, reines CSS)
+   ========================================================================== */
+
+/* Die Sterne stehen im Markup von 5 nach 1 und werden per row-reverse
+   umgedreht — so faerbt :hover ~ label alle "kleineren" Sterne mit ein. */
+.rating {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  border: none;
+  padding: 0;
+}
+
+.rating input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.rating label {
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--border-strong);
+  cursor: pointer;
+  transition: color var(--transition), scale var(--transition);
+}
+
+.rating label:hover,
+.rating label:hover ~ label,
+.rating input:checked ~ label {
+  color: var(--warning);
+}
+
+.rating label:hover {
+  scale: 1.12;
+}
+
+.rating input:focus-visible + label {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.rating-result {
+  font-size: 1.5rem;
+  color: var(--border-strong);
+}
+
+.rating-result .is-on,
+.rating-inline {
+  color: var(--warning);
+}
+
+/* ==========================================================================
+   Admin-Einstellungen
+   ========================================================================== */
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+  margin-top: var(--space-5);
+}
+
+.settings-grid__wide {
+  grid-column: 1 / -1;
+}
+
+.settings-grid .card {
+  scroll-margin-top: calc(var(--nav-height) + var(--space-4));
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3);
+}
+
+.status-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+}
+
+.status-tile__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.edit-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.edit-list .row {
+  flex-wrap: nowrap;
+}
+
+.edit-list .input {
+  flex: 1;
+}
+
+.canned {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.canned summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.canned[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.canned form {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.table--compact th,
+.table--compact td {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ==========================================================================
+   Schmale Bildschirme
+   ========================================================================== */
+
+@media (max-width: 60rem) {
+  .ticket-layout,
+  .inbox {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ticket-layout__aside,
+  .inbox__nav {
+    position: static;
+  }
+
+  .view-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: var(--space-2);
+  }
+
+  .view-list__item {
+    white-space: nowrap;
+  }
+}
+
+/* Mit "Tickets"/"Meine Tickets" hat die Navigation mehr Eintraege als
+   frueher — auf schmalen Displays horizontal scrollbar statt ueberlaufend. */
+@media (max-width: 48rem) {
+  .nav__inner {
+    gap: var(--space-3);
+  }
+
+  .nav__links {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav__links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav__link,
+  .nav__brand {
+    white-space: nowrap;
+  }
+
+  .nav__link {
+    padding-inline: var(--space-2);
+  }
+
+  .nav__actions {
+    margin-inline-start: calc(var(--space-1) - var(--space-3));
+  }
+}
+
+@media (max-width: 36rem) {
+  .nav__brand-text {
+    display: none;
+  }
+
+  /* Admin: Dateien, Verwaltung, Tickets + Zaehler, Abmelden muessen bei
+     ~390 px ohne Scrollen nebeneinander passen. */
+  .nav__link {
+    padding-inline: 0.4rem;
+    font-size: 0.8125rem;
+  }
+
+  .nav__links {
+    gap: 2px;
+  }
+
+  /* Abmelden als Icon (title/Text bleiben fuer Screenreader erhalten) */
+  .nav__link--logout {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .nav__logout-icon {
+    display: block;
+  }
+
+  .nav__logout-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Auf dem Handy nur das Label des aktuellen Schritts */
+  .stepper__step:not(.is-current) .stepper__label {
+    display: none;
+  }
+
+  .view-list .icon {
+    display: none;
+  }
+
+  .composer__tools {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .composer__canned {
+    flex: 1 1 12rem;
+  }
+
+  .msg {
+    max-width: 100%;
+  }
+
+  .msg__avatar {
+    display: none;
+  }
+
+  .ticket-item {
+    flex-wrap: wrap;
+  }
+
+  .ticket-item__side {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding-left: calc(0.5rem + var(--space-3));
+  }
+
+  .filters .input {
+    flex: 1 1 8rem;
+  }
+
+  .stepper__label {
+    font-size: var(--text-xs);
+  }
+
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Tastenkuerzel-Hinweise nur dort, wo es eine Tastatur gibt */
+@media (hover: none) {
+  .hint:has(> kbd) {
+    display: none;
+  }
+}
+
+/* Die Abmelde-Uhr ist mobil verzichtbar — spart Platz in der Navigation */
+@media (max-width: 36rem) {
+  .nav [data-idle-remaining] {
+    display: none !important;
+  }
+}
+
+/* Sehr schmale Displays (≤ 384 px): das Logo verlinkt dasselbe wie
+   "Dateien" und macht dort Platz, damit kein Nav-Eintrag gequetscht wird. */
+@media (max-width: 24rem) {
+  .nav__brand {
+    display: none;
+  }
+
+  .nav__links {
+    margin-inline-end: auto;
+  }
+
+  .nav__link {
+    flex-shrink: 0;
+  }
+}
+
+/* ==========================================================================
+   Antwortfristen (SLA), Dateibezug, Seitenkopf mit Aktion
+   ========================================================================== */
+
+.page-header--actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+}
+
+.page-header--actions > :not(.page-header__title, .page-header__action) {
+  grid-column: 1 / -1;
+}
+
+.page-header__action {
+  align-self: center;
+}
+
+/* Frist: Text traegt die Bedeutung, Farbe verstaerkt nur */
+.sla {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.sla--warn {
+  color: var(--warning);
+}
+
+.sla--overdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* Wiedervorlage: Hinweis in Liste/Kopf und Vorgaben in der Seitenleiste */
+.snooze-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.snooze-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.btn.snooze-presets__item {
+  line-height: 1.3;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  height: auto;
+  padding-block: var(--space-2);
+  text-align: left;
+  white-space: normal;
+}
+
+.chip-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  padding: 0.125rem var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--accent-subtle);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-iso__name {
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+}
+
+.ticket-iso__hash {
+  font-size: var(--text-xs);
+}
+
+/* ==========================================================================
+   Wissensdatenbank: Vorschlaege, Artikelliste, Artikeltext
+   ========================================================================== */
+
+.kb-suggest {
+  padding: var(--space-3);
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, var(--border));
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+}
+
+.kb-suggest__title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.kb-suggest__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb-suggest__link {
+  font-weight: 500;
+}
+
+.kb-suggest__excerpt {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.kb-search {
+  max-width: none;
+  margin-bottom: var(--space-5);
+}
+
+.kb-results {
+  margin-bottom: var(--space-6);
+}
+
+.kb-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.kb-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb-list__item + .kb-list__item {
+  border-top: 1px solid var(--border);
+}
+
+.kb-list__link {
+  display: block;
+  padding: var(--space-2) 0;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.kb-list__link:hover .kb-list__title {
+  color: var(--accent);
+}
+
+.kb-list__title {
+  display: block;
+  font-weight: 500;
+}
+
+.kb-list__excerpt {
+  display: block;
+  margin-top: 0.125rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* Artikeltext aus lib/markdown.js — nur die Tags, die der Renderer erzeugt */
+.prose {
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.prose > * + * {
+  margin-top: var(--space-3);
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+  margin-top: var(--space-5);
+  letter-spacing: var(--tracking-tight);
+}
+
+.prose h2 { font-size: var(--text-xl); }
+.prose h3 { font-size: var(--text-lg); }
+.prose h4 { font-size: var(--text-base); }
+
+.prose ul,
+.prose ol {
+  padding-left: 1.5rem;
+}
+
+.prose li + li {
+  margin-top: var(--space-1);
+}
+
+.prose code {
+  padding: 0.0625rem 0.3125rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.prose pre {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  overflow-x: auto;
+}
+
+.prose pre code {
+  padding: 0;
+  background: none;
+  font-size: var(--text-sm);
+}
+
+.kb-preview {
+  border-style: dashed;
+}
+
+/* ==========================================================================
+   Berichte (/admin/reports) — ergaenzt die Diagrammklassen aus events.css
+   ========================================================================== */
+
+.chart__col--created { fill: var(--accent); }
+.chart__col--resolved { fill: var(--success); }
+
+.legend__swatch--created { background: var(--accent); }
+.legend__swatch--resolved { background: var(--success); }
+
+.report-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.report-range__custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.stars-dist .dist__row {
+  grid-template-columns: 4rem minmax(0, 1fr) auto;
+}
+
+.report-comments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-comments__meta {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}

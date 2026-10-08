@@ -21,6 +21,20 @@
     var button = event.target.closest("[data-tag-remove]");
     if (!button) return;
     event.preventDefault();
+    var ask = typeof window.appConfirm === "function"
+      ? window.appConfirm({
+        title: "Tag „" + button.dataset.tagValue + "“ entfernen?",
+        text: "Der Tag verschwindet von „" + button.dataset.tagFile + "“ und wird auch beim nächsten Prüflauf nicht wieder vergeben.",
+        ok: "Entfernen",
+        returnFocus: button,
+      })
+      : Promise.resolve(true);
+    ask.then(function (confirmed) {
+      if (confirmed) removeTag(button);
+    });
+  });
+
+  function removeTag(button) {
     button.disabled = true;
 
     var url =
@@ -38,5 +52,5 @@
         notify(err.message, "error");
         button.disabled = false;
       });
-  });
+  }
 })();

@@ -3,10 +3,13 @@
  * betroffenen Bereiche — deklarativ wie die uebrigen Scripts:
  *
  *   <body data-heartbeat="public">   index.ejs, /search
- *   <body data-heartbeat="admin">    admin.ejs, /admin-search, audit-log.ejs
+ *   <body data-heartbeat="admin">    admin.ejs, /admin-search
  *
  * Jeder Teilbereich (Dateitabelle, Tag-Filterleiste, Audit-Widget/-Seite,
- * Passkeys, API-Tokens) wird unabhaengig behandelt und ist ein No-Op, wenn
+ * Passkeys, API-Tokens, Benutzername/TOTP-Status, dazu ueber live-regions.js
+ * die einfachen Bereiche aus `regions`: Navigationszaehler, Ticket-
+ * Uebersicht und -Reiterzaehler, Backups samt Zeitplan, die "Ersetzt
+ * vorhandene Datei"-Auswahl im Upload) wird unabhaengig behandelt und ist ein No-Op, wenn
  * sein Markup auf der aktuellen Seite fehlt — dieselbe Opt-in-Regel wie bei
  * row-details.js/tags.js. Server-Gegenstueck: GET /partials/listing (oeffent-
  * lich) bzw. GET /admin/partials/listing (checkAuth) in server.js, beide
@@ -139,6 +142,16 @@
 
     if (!changed) return;
 
+    // Erste Datei in eine leere Liste bzw. letzte entfernt: Tabelle/Suche und
+    // Leer-Hinweis umblenden (beide stehen immer im Markup, siehe index.ejs).
+    var hasFiles = tbody.querySelector("tr[data-row]") !== null;
+    document.querySelectorAll("[data-files-present]").forEach(function (el) {
+      el.hidden = !hasFiles;
+    });
+    document.querySelectorAll("[data-files-empty]").forEach(function (el) {
+      el.hidden = hasFiles;
+    });
+
     var table = tbody.closest("table");
     if (table) table.dispatchEvent(new CustomEvent("table:changed"));
 
@@ -223,11 +236,17 @@
    * bereits angezeigte id) werden eingefuegt.
    */
 
-  var dateFormatter = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "short", year: "numeric" });
+  // Dieselbe Zeitzone wie die serverseitig gerenderten Eintraege (lib/time.js,
+  // <meta name="app-time-zone">), nicht die des Browsers — sonst stuenden
+  // Server- und Live-Eintraege in verschiedenen Zeitzonen untereinander.
+  var zoneMeta = document.querySelector('meta[name="app-time-zone"]');
+  var zoneOptions = zoneMeta && zoneMeta.content ? { timeZone: zoneMeta.content } : {};
+  var dateFormatter = new Intl.DateTimeFormat("de-DE", Object.assign({ day: "2-digit", month: "short", year: "numeric" }, zoneOptions));
+  var timeFormatter = new Intl.DateTimeFormat("de-DE", Object.assign({ hour: "2-digit", minute: "2-digit", second: "2-digit" }, zoneOptions));
 
   function formatEntryTime(ts) {
     var date = new Date(ts);
-    return dateFormatter.format(date) + " " + date.toLocaleTimeString("de-DE");
+    return dateFormatter.format(date) + " " + timeFormatter.format(date);
   }
 
   function buildWidgetEntry(entry) {
@@ -341,6 +360,43 @@
     prependNewEntries(body, entries, buildLogRow, null);
   }
 
+  /* ------------------------------------------------------------ Konto-Karte
+   * Benutzername und TOTP-Status kommen als Werte statt Markup: das Feld und
+   * die TOTP-Buttons gehoeren account-forms.js/totp.js (Listener, Dialoge).
+   * Geaendert wird nur, was niemand gerade bearbeitet — ein fokussiertes
+   * oder schon veraendertes Feld, ein offener Dialog bleiben unangetastet.
+   */
+
+  function syncAccount(account) {
+    if (!account) return;
+
+    var field = document.getElementById("usernameInput");
+    if (
+      field &&
+      typeof account.username === "string" &&
+      field.defaultValue !== account.username &&
+      field.value === field.defaultValue &&
+      document.activeElement !== field
+    ) {
+      field.defaultValue = account.username;
+      field.value = account.username;
+      flash(field);
+    }
+
+    var badge = document.getElementById("totpStatusBadge");
+    if (!badge || typeof account.totpEnabled !== "boolean") return;
+    if (document.querySelector("#totpSetupDialog[open], #totpRecoveryDialog[open]")) return;
+    var enabled = account.totpEnabled;
+    if (badge.classList.contains("badge--ok") === enabled) return;
+    badge.textContent = enabled ? "Aktiv" : "Inaktiv";
+    badge.classList.toggle("badge--ok", enabled);
+    var setupButton = document.getElementById("totpSetupButton");
+    var disableButton = document.getElementById("totpDisableButton");
+    if (setupButton) setupButton.hidden = enabled;
+    if (disableButton) disableButton.hidden = !enabled;
+    flash(badge);
+  }
+
   /* -------------------------------------------------------------- Steuerung */
 
   function fetchJson(url) {
@@ -365,6 +421,10 @@
       .then(function (data) {
         syncFileRows(data.filesHtml);
         syncTagFilter(data.tagsHtml);
+        // Navigationszaehler, Ticket-Uebersicht, Backups: einfache Bereiche
+        // ohne eigenen Zustand — dieselbe Ersetzungslogik wie auf den
+        // Seiten, die live-regions.js selbst abfragt.
+        if (data.regions && window.LiveRegions) window.LiveRegions.apply(data.regions);
         if (mode === "admin") {
           syncSimpleList(document.getElementById("passkeyList"), data.passkeysHtml, "data-passkey-id", "data-passkey-empty", function () {
             var li = document.createElement("li");
@@ -384,6 +444,7 @@
               '<p class="empty__text">Erstelle ein Token, um Dateien per Skript hoch-/herunterzuladen oder zu verwalten.</p>';
             return li;
           });
+          syncAccount(data.account);
           if (Array.isArray(data.auditEntries)) {
             syncAuditWidget(data.auditEntries);
             syncAuditPage(data.auditEntries);

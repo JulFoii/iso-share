@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Passwort vergessen' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<%- include('../partials/navbar', { page: 'support' }) %>
+
+<main class="auth" id="main">
+  <div class="auth__card">
+    <div class="auth__head">
+      <span class="auth__logo"><%- include('../partials/icon', { name: 'lock', size: 18 }) %></span>
+      <h1 class="auth__title">Passwort vergessen</h1>
+      <p class="auth__subtitle">Wir schicken dir einen Link, mit dem du ein neues Passwort festlegen kannst.</p>
+    </div>
+
+    <div class="card">
+      <div class="card__body stack stack--sm">
+        <% if (error) { %>
+          <%- include('../partials/alert', { variant: 'danger', text: error }) %>
+        <% } %>
+        <form class="stack stack--sm" action="/account/forgot" method="POST">
+          <div class="field">
+            <label class="label" for="email">E-Mail-Adresse</label>
+            <input class="input" type="email" id="email" name="email" autocomplete="email" required autofocus>
+          </div>
+          <button type="submit" class="btn btn--primary btn--block">Link anfordern</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="auth__footer"><a href="/account/login">Zurück zur Anmeldung</a></p>
+  </div>
+</main>
+
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

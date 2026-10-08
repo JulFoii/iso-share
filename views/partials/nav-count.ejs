@@ -1,0 +1,4 @@
+<%# Zaehler am Tickets-Link der Navigation. Eigenes Partial, weil
+    heartbeat.js ihn auf admin.ejs ueber GET /admin/partials/listing
+    nachgeliefert bekommt (Live-Bereich "nav-count", siehe live-regions.js). %>
+<% if (count > 0) { %><span class="nav__count" title="<%= title %>"><%= count %></span><% } %>

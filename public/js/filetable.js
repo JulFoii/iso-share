@@ -157,11 +157,16 @@
       detail.hidden = !match || !expanded;
     });
 
-    if (emptyHint) emptyHint.hidden = visible !== 0;
+    // Ganz ohne Dateien zeigt die Seite ihren eigenen Leer-Hinweis
+    // ([data-files-empty], von heartbeat.js umgeblendet) statt "Keine Treffer".
+    if (emptyHint) emptyHint.hidden = visible !== 0 || rows.length === 0;
     table.hidden = visible === 0;
     for (var j = 0; j < countTargets.length; j++) {
       countTargets[j].textContent = visible;
     }
+    document.querySelectorAll("[data-count-noun]").forEach(function (noun) {
+      noun.textContent = visible === 1 ? noun.dataset.singular : noun.dataset.plural;
+    });
   }
 
   input.addEventListener("input", filter);

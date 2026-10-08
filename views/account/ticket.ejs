@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: `#${ticket.number} ${ticket.subject}` }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/account/tickets/<%= ticket.number %>">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'account-tickets' }) %>
+
+<%
+  const steps = [
+    { key: 'received', label: 'Eingegangen', done: true },
+    { key: 'progress', label: 'In Bearbeitung', done: ticket.status !== 'new' },
+    { key: 'resolved', label: ticket.status === 'closed' ? 'Geschlossen' : 'Gelöst', done: ['resolved', 'closed'].includes(ticket.status) },
+  ];
+  const currentStep = ['resolved', 'closed'].includes(ticket.status) ? 2 : ticket.status === 'new' ? 0 : 1;
+  const isActive = ['new', 'open', 'pending'].includes(ticket.status);
+  const draftText = typeof draft !== 'undefined' ? draft : '';
+  // updated_at springt auch bei internen Notizen und Prioritaetswechseln —
+  // fuer den Kunden zaehlt nur, was er selbst im Verlauf sieht.
+  const lastVisibleAt = messages.length ? messages[messages.length - 1].createdAt : ticket.createdAt;
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <a class="back-link" href="/account/tickets"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Meine Tickets</a>
+
+    <header class="ticket-head">
+      <div class="ticket-head__main">
+        <p class="ticket-head__number mono">#<%= ticket.number %></p>
+        <h1 class="ticket-head__title"><%= ticket.subject %></h1>
+        <p class="ticket-meta">
+          <span data-live-status><%- include('../partials/ticket-status-badge', { ticket, viewer: 'customer' }) %></span>
+          <span class="ticket-meta__item">erstellt <%= formatDateTime(ticket.createdAt) %></span>
+        </p>
+      </div>
+    </header>
+
+    <ol class="stepper" aria-label="Fortschritt">
+      <% steps.forEach((step, index) => { %>
+        <li class="stepper__step<%= step.done ? ' is-done' : '' %><%= index === currentStep ? ' is-current' : '' %>" <%- index === currentStep ? 'aria-current="step"' : '' %>>
+          <span class="stepper__marker"><%- step.done ? include('../partials/icon', { name: 'check', size: 12 }) : index + 1 %></span>
+          <span class="stepper__label"><%= step.label %></span>
+        </li>
+      <% }); %>
+    </ol>
+
+    <% if (created) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: `Danke! Dein Ticket #${ticket.number} ist eingegangen. Du bekommst eine Bestätigung per E-Mail und wirst benachrichtigt, sobald wir antworten.` }) %></div>
+    <% } %>
+    <div class="mb-4" data-live-show="pending" <%= ticket.status === 'pending' ? '' : 'hidden' %>><%- include('../partials/alert', { variant: 'info', text: 'Wir haben dir geantwortet und warten auf deine Rückmeldung.' }) %></div>
+
+    <div class="ticket-layout">
+      <div class="ticket-layout__main">
+        <section class="thread" aria-label="Verlauf"
+                 data-live-thread
+                 data-updates-url="/account/tickets/<%= ticket.number %>/updates"
+                 data-updated-at="<%= ticket.updatedAt %>"
+                 data-status="<%= ticket.status %>"
+                 data-live-reload-on-status="new resolved closed">
+          <%- include('../partials/ticket-thread', { messages, ticket, viewer: 'customer' }) %>
+        </section>
+
+        <% if (ticket.status === 'closed') { %>
+          <div class="card card--muted">
+            <div class="card__body row">
+              <%- include('../partials/icon', { name: 'lock', size: 16 }) %>
+              <span>Dieses Ticket ist geschlossen. Für ein neues Anliegen lege bitte ein neues Ticket an.</span>
+              <a class="btn btn--secondary btn--sm spacer" href="/account/tickets/new">Neues Ticket</a>
+            </div>
+          </div>
+        <% } else { %>
+          <form class="composer card" id="reply" action="/account/tickets/<%= ticket.number %>/reply" method="POST" enctype="multipart/form-data" data-composer data-async>
+            <div class="card__body stack stack--sm">
+              <% if (replyError) { %><%- include('../partials/alert', { variant: 'danger', text: replyError }) %><% } %>
+              <div data-composer-error hidden></div>
+              <label class="label" for="message">Antworten</label>
+              <textarea class="input textarea" id="message" name="message" rows="5" maxlength="10000"
+                        placeholder="Deine Nachricht …"><%= draftText %></textarea>
+              <% if (ticket.status === 'resolved') { %>
+                <span class="hint">Das Ticket ist als gelöst markiert — mit einer Antwort öffnest du es wieder.</span>
+              <% } %>
+              <%- include('../partials/attachment-input', { maxFiles, maxMb }) %>
+            </div>
+            <div class="card__footer">
+              <span class="hint composer__kbd"><kbd>Strg</kbd> + <kbd>Enter</kbd> zum Senden</span>
+              <button type="submit" class="btn btn--primary"><%- include('../partials/icon', { name: 'send', size: 15 }) %> Senden</button>
+            </div>
+          </form>
+        <% } %>
+      </div>
+
+      <aside class="ticket-layout__aside">
+        <section class="card" data-live-region="ticket-details">
+          <div class="card__header"><h2 class="card__title">Details</h2></div>
+          <dl class="props">
+            <div><dt>Status</dt><dd data-live-status-label data-labels="<%= JSON.stringify(customerStatusLabels) %>"><%= customerStatusLabels[ticket.status] %></dd></div>
+            <div><dt>Dringlichkeit</dt><dd><%- include('../partials/ticket-priority', { priority: ticket.priority }) %></dd></div>
+            <div><dt>Kategorie</dt><dd><%= ticket.categoryName || '—' %></dd></div>
+            <div><dt>Erstellt</dt><dd><%= formatDateTime(ticket.createdAt) %></dd></div>
+            <% if (typeof splitFrom !== 'undefined' && splitFrom) { %>
+              <div><dt>Aufgeteilt aus</dt><dd><a href="/account/tickets/<%= splitFrom.number %>" title="<%= splitFrom.subject %>">#<%= splitFrom.number %></a></dd></div>
+            <% } %>
+            <div><dt>Letzte Aktivität</dt><dd><%= relativeTime(lastVisibleAt) %></dd></div>
+          </dl>
+          <% if (isActive) { %>
+            <form class="card__footer" action="/account/tickets/<%= ticket.number %>/resolve" method="POST"
+                  data-confirm="Das Ticket wird als gelöst markiert. Falls doch noch etwas ist, öffnest du es mit einer Antwort einfach wieder."
+                  data-confirm-title="Problem gelöst?" data-confirm-ok="Als gelöst markieren" data-confirm-variant="primary">
+              <button type="submit" class="btn btn--secondary btn--block"><%- include('../partials/icon', { name: 'checkCircle', size: 15 }) %> Problem gelöst</button>
+            </form>
+          <% } %>
+        </section>
+
+        <div class="live-slot" data-live-region="ticket-iso">
+        <% if (ticket.isoFile && typeof isoInfo !== 'undefined') { %>
+          <%- include('../partials/ticket-iso', { ticket, isoInfo, viewer: 'customer' }) %>
+        <% } %>
+        </div>
+
+        <% if (['resolved', 'closed'].includes(ticket.status)) { %>
+          <section class="card" id="rating" aria-labelledby="rating-heading">
+            <div class="card__header"><h2 class="card__title" id="rating-heading">Wie zufrieden bist du?</h2></div>
+            <div class="card__body">
+              <% if (ticket.rating) { %>
+                <p class="rating-result" aria-label="<%= ticket.rating %> von 5 Sternen">
+                  <% for (let i = 1; i <= 5; i += 1) { %><span class="<%= i <= ticket.rating ? 'is-on' : '' %>">★</span><% } %>
+                </p>
+                <p class="hint">Danke für deine Bewertung!</p>
+              <% } else { %>
+                <form class="stack stack--sm" action="/account/tickets/<%= ticket.number %>/rate" method="POST">
+                  <fieldset class="rating">
+                    <legend class="visually-hidden">Bewertung</legend>
+                    <% for (let i = 5; i >= 1; i -= 1) { %>
+                      <input type="radio" id="rating-<%= i %>" name="rating" value="<%= i %>" required>
+                      <label for="rating-<%= i %>" title="<%= i %> von 5">★</label>
+                    <% } %>
+                  </fieldset>
+                  <textarea class="input textarea" name="comment" rows="3" maxlength="1000" placeholder="Optional: Was können wir besser machen?"></textarea>
+                  <button type="submit" class="btn btn--primary btn--sm">Bewertung senden</button>
+                </form>
+              <% } %>
+            </div>
+          </section>
+        <% } %>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/attachments.js') %>" defer></script>
+<script src="<%= asset('/js/composer.js') %>" defer></script>
+<script src="<%= asset('/js/ticket-live.js') %>" defer></script>
+</body>
+</html>

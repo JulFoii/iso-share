@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Ticket anlegen' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/admin/tickets/new<%= customer ? `?customer=${customer.id}` : '' %>">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <a class="back-link" href="<%= customer ? `/admin/customers/${customer.id}` : '/admin/tickets' %>"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> <%= customer ? 'Kundenprofil' : 'Posteingang' %></a>
+    <header class="page-header">
+      <h1 class="page-header__title">Ticket für einen Kunden anlegen</h1>
+      <p class="page-header__meta">
+        <span>Zum Beispiel nach einem Anruf: Die erste Nachricht kommt vom Support und geht an den Kunden<%= mailEnabled ? ' — auch per E-Mail' : '' %>.</span>
+      </p>
+    </header>
+
+    <% if (error) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div>
+    <% } %>
+
+    <form class="card" action="/admin/tickets/new" method="POST" enctype="multipart/form-data" data-composer>
+      <div class="card__body stack stack--sm">
+        <% if (customer) { %>
+          <input type="hidden" name="customerId" value="<%= customer.id %>">
+          <div class="person">
+            <span class="msg__avatar msg__avatar--customer" aria-hidden="true"><%= initials(customer.name || customer.email) %></span>
+            <span class="person__text">
+              <strong><%= customer.name %></strong>
+              <span class="mono hint"><%= customer.email %></span>
+            </span>
+          </div>
+          <% if (!customer.emailVerified || customer.disabled) { %>
+            <%- include('../partials/alert', { variant: 'danger', text: 'Dieses Konto ist nicht bestätigt oder gesperrt — dafür lässt sich kein Ticket anlegen.' }) %>
+          <% } %>
+        <% } else { %>
+          <div class="field">
+            <label class="label" for="customerEmail">E-Mail-Adresse des Kunden</label>
+            <input class="input" type="email" id="customerEmail" name="customerEmail" value="<%= values.customerEmail %>" maxlength="254" required autofocus>
+            <span class="hint">Das Kundenkonto muss existieren und bestätigt sein.</span>
+          </div>
+        <% } %>
+
+        <div class="field">
+          <label class="label" for="subject">Betreff</label>
+          <input class="input" type="text" id="subject" name="subject" value="<%= values.subject %>" maxlength="200" required <%= customer ? 'autofocus' : '' %>>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="categoryId">Kategorie</label>
+            <select class="input" id="categoryId" name="categoryId">
+              <option value="">— keine —</option>
+              <% categories.forEach(category => { %>
+                <option value="<%= category.id %>" <%= values.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+              <% }); %>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="priority">Priorität</label>
+            <select class="input" id="priority" name="priority">
+              <% Object.entries(priorityLabels).forEach(([key, label]) => { %>
+                <option value="<%= key %>" <%= values.priority === key ? 'selected' : '' %>><%= label %></option>
+              <% }); %>
+            </select>
+          </div>
+        </div>
+
+        <% if (isoFiles.length) { %>
+          <div class="field">
+            <label class="label" for="isoFile">Betroffene Datei <span class="text-muted">(optional)</span></label>
+            <select class="input" id="isoFile" name="isoFile">
+              <option value="">— keine —</option>
+              <% isoFiles.forEach(name => { %>
+                <option value="<%= name %>" <%= values.isoFile === name ? 'selected' : '' %>><%= name %></option>
+              <% }); %>
+            </select>
+          </div>
+        <% } %>
+
+        <div class="field">
+          <label class="label" for="message">Nachricht an den Kunden</label>
+          <%# Zeilenumbruch nach <textarea> wie im Ticket-Composer: HTML verschluckt genau einen fuehrenden Umbruch %>
+          <textarea class="input textarea" id="message" name="message" rows="9" maxlength="10000" required
+                    placeholder="Hallo …, wie telefonisch besprochen …"
+                    data-reply-template="<%= replyDraft.value %>" data-reply-caret="<%= replyDraft.caret %>">
+<%= values.message %></textarea>
+        </div>
+
+        <div class="field">
+          <label class="label" for="note">Interne Notiz <span class="text-muted">(optional, nur für den Support)</span></label>
+          <textarea class="input textarea" id="note" name="note" rows="3" maxlength="10000"
+                    placeholder="z. B. Anruf am … — Kunde meldet …"><%= values.note %></textarea>
+        </div>
+
+        <%- include('../partials/attachment-input', { maxFiles, maxMb }) %>
+      </div>
+      <div class="card__footer">
+        <label class="composer__status">
+          <span class="hint">Status danach</span>
+          <select class="input input--sm" name="statusAfter">
+            <% statusOptions.forEach(([key, label]) => { %>
+              <option value="<%= key %>" <%= values.statusAfter === key ? 'selected' : '' %>><%= label %></option>
+            <% }); %>
+          </select>
+        </label>
+        <button type="submit" class="btn btn--primary"><%- include('../partials/icon', { name: 'send', size: 15 }) %> Ticket anlegen</button>
+      </div>
+    </form>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/attachments.js') %>" defer></script>
+<script src="<%= asset('/js/composer.js') %>" defer></script>
+</body>
+</html>

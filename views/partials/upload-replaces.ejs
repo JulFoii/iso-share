@@ -1,0 +1,20 @@
+<%# "Ersetzt vorhandene Datei" im Upload-Formular von admin.ejs — eigenes
+    Partial, weil heartbeat.js die Auswahl ueber GET /admin/partials/listing
+    nachgeliefert bekommt (Live-Bereich "upload-replaces"): eine inzwischen
+    hochgeladene oder geloeschte Datei soll auch hier auftauchen bzw.
+    verschwinden. upload.js sucht das Feld darum erst beim Absenden. %>
+<% if (files.length > 0) { %>
+  <div class="field">
+    <label class="label" for="uploadReplaces">Ersetzt vorhandene Datei (optional)</label>
+    <select class="input" id="uploadReplaces" name="replaces">
+      <option value="">— keine, als neue Datei hochladen —</option>
+      <% files.forEach(file => { %>
+        <option value="<%= file.name %>"><%= file.name %></option>
+      <% }) %>
+    </select>
+    <span class="hint">
+      Nützlich bei einer neueren Version unter anderem Namen — die
+      gewählte Datei wird nach erfolgreichem Upload automatisch gelöscht.
+    </span>
+  </div>
+<% } %>

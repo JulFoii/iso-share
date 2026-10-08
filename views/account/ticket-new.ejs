@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Neues Ticket' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/account/tickets/new">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'account-tickets' }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <a class="back-link" href="/account/tickets"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Meine Tickets</a>
+    <header class="page-header">
+      <h1 class="page-header__title">Neues Ticket</h1>
+      <p class="page-header__meta"><span>Beschreibe dein Anliegen möglichst genau — dann können wir schneller helfen.</span></p>
+      <% if (mailTicketAddress) { %>
+        <p class="hint">Du kannst ein Ticket auch per E-Mail an <a class="mono" href="mailto:<%= mailTicketAddress %>"><%= mailTicketAddress %></a> eröffnen — von der Adresse deines Kontos aus.</p>
+      <% } %>
+    </header>
+
+    <% if (error) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div>
+    <% } %>
+
+    <form class="card" action="/account/tickets" method="POST" enctype="multipart/form-data" data-composer>
+      <div class="card__body stack stack--sm">
+        <div class="field">
+          <label class="label" for="subject">Betreff</label>
+          <input class="input" type="text" id="subject" name="subject" value="<%= values.subject || '' %>" maxlength="200"
+                 placeholder="z. B. Download von debian-12.iso bricht ab" required autofocus
+                 data-kb-suggest="/support/articles.json" aria-describedby="kb-suggest">
+        </div>
+        <%# Vorschlaege aus der Hilfe, gefuellt von kb-suggest.js — ohne JS bleibt der Bereich leer und versteckt %>
+        <aside class="kb-suggest" id="kb-suggest" aria-live="polite" hidden>
+          <p class="kb-suggest__title"><%- include('../partials/icon', { name: 'info', size: 14 }) %> Vielleicht hilft dir das schon:</p>
+          <ul class="kb-suggest__list" data-kb-suggest-list></ul>
+        </aside>
+
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="categoryId">Kategorie</label>
+            <select class="input" id="categoryId" name="categoryId">
+              <option value="">— bitte wählen —</option>
+              <% categories.forEach(category => { %>
+                <option value="<%= category.id %>" <%= values.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+              <% }); %>
+            </select>
+          </div>
+          <fieldset class="field">
+            <legend class="label">Dringlichkeit</legend>
+            <div class="choice-row">
+              <% [['low', 'Niedrig'], ['normal', 'Normal'], ['high', 'Hoch']].forEach(([value, label]) => { %>
+                <label class="choice">
+                  <input type="radio" name="priority" value="<%= value %>" <%= (values.priority || 'normal') === value ? 'checked' : '' %>>
+                  <span><%= label %></span>
+                </label>
+              <% }); %>
+            </div>
+          </fieldset>
+        </div>
+
+        <% if (isoFiles.length) { %>
+          <div class="field">
+            <label class="label" for="isoFile">Betroffene Datei <span class="text-muted">(optional)</span></label>
+            <select class="input" id="isoFile" name="isoFile">
+              <option value="">— keine bestimmte Datei —</option>
+              <% isoFiles.forEach(name => { %>
+                <option value="<%= name %>" <%= values.isoFile === name ? 'selected' : '' %>><%= name %></option>
+              <% }); %>
+            </select>
+          </div>
+        <% } %>
+
+        <div class="field">
+          <label class="label" for="message">Nachricht</label>
+          <textarea class="input textarea" id="message" name="message" rows="9" maxlength="10000" required
+                    placeholder="Was ist passiert? Was hast du erwartet? Welche Datei, welches System, welcher Browser?"><%= values.message || '' %></textarea>
+          <span class="hint">Tipp: <kbd>Strg</kbd> + <kbd>Enter</kbd> sendet das Formular.</span>
+        </div>
+
+        <%- include('../partials/attachment-input', { maxFiles, maxMb }) %>
+      </div>
+      <div class="card__footer">
+        <a class="btn btn--ghost" href="/account/tickets">Abbrechen</a>
+        <button type="submit" class="btn btn--primary"><%- include('../partials/icon', { name: 'send', size: 15 }) %> Ticket senden</button>
+      </div>
+    </form>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/attachments.js') %>" defer></script>
+<script src="<%= asset('/js/composer.js') %>" defer></script>
+<script src="<%= asset('/js/kb-suggest.js') %>" defer></script>
+</body>
+</html>

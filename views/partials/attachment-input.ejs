@@ -1,0 +1,16 @@
+<%
+/*
+ * Datei-Auswahl fuer Anhaenge. Ohne JS ein normales <input type=file
+ * multiple>; public/js/attachments.js macht daraus eine Drop-Zone mit
+ * Dateiliste und Entfernen-Knopf (data-attachments).
+ */
+%>
+<div class="attach" data-attachments data-max-files="<%= maxFiles %>" data-max-mb="<%= maxMb %>">
+  <label class="attach__zone">
+    <%- include('icon', { name: 'paperclip', size: 16 }) %>
+    <span class="attach__label">Dateien anhängen <span class="attach__hint">oder hierher ziehen · max. <%= maxFiles %> Dateien à <%= maxMb %> MB</span></span>
+    <input class="attach__input" type="file" name="attachments" multiple
+           accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,application/zip,application/gzip,.txt,.log,.csv,.md,.json,.conf,.cfg,.ini,.yaml,.yml,.gz,.zip">
+  </label>
+  <ul class="attach__list" data-attachment-list hidden></ul>
+</div>

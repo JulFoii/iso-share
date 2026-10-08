@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Tickets' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<%
+  // Wenige, klar getrennte Ansichten: wer ist am Zug? Weitere Ansichten
+  // (unread, urgent, resolved, closed) bleiben per URL erreichbar, stehen
+  // aber nicht in der Leiste — Prioritaet ist ein Filter.
+  const viewList = [
+    ['active', 'Alle offenen', 'inbox'],
+    ['new', 'Unbeantwortet', 'zap'],
+    ['open', 'Kunde hat geantwortet', 'message'],
+    ['pending', 'Wartet auf Kunde', 'clock'],
+    ['snoozed', 'Wiedervorlage', 'bell'],
+    ['overdue', 'Frist überschritten', 'alert'],
+    ['done', 'Erledigt', 'checkCircle'],
+    ['all', 'Alle', 'ticket'],
+  ];
+  const extraViews = { unread: 'Ungelesen', urgent: 'Hohe Priorität', resolved: 'Gelöst', closed: 'Geschlossen' };
+  const viewTitle = extraViews[filters.view] || (viewList.find(v => v[0] === filters.view) || viewList[0])[1];
+  const returnTo = '/admin/tickets?' + new URLSearchParams(Object.entries({
+    view: filters.view, q: filters.q, category: filters.categoryId || '', priority: filters.priority || '',
+    sort: filters.sort, page: filters.page > 1 ? filters.page : '', file: filters.isoFile || '',
+  }).filter(([, v]) => v !== '' && v !== null)).toString();
+  const hasFilters = Boolean(filters.q || filters.categoryId || filters.priority || filters.isoFile);
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header page-header--actions">
+      <h1 class="page-header__title">Tickets</h1>
+      <a class="btn btn--secondary btn--sm page-header__action" href="/admin/tickets/new"><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Neues Ticket</a>
+      <p class="page-header__meta" data-live-region="inbox-meta">
+        <span><strong class="text-strong"><%= counts.active %></strong> offen</span>
+        <span>Ø Erstreaktion <%= formatDuration(stats.avgFirstResponseMs) %></span>
+        <span>Zufriedenheit <%= stats.avgRating ? stats.avgRating.toFixed(1).replace('.', ',') + ' ★' : '—' %></span>
+      </p>
+    </header>
+
+    <%- include('../partials/admin-ticket-nav', { current: 'inbox' }) %>
+
+    <div class="live-banner" data-live-pulse data-pulse-url="/admin/tickets/pulse" data-latest="<%= latestActivity %>" hidden>
+      <%- include('../partials/icon', { name: 'refresh', size: 15 }) %>
+      <span>Es gibt neue Aktivität.</span>
+      <a class="btn btn--secondary btn--sm" href="<%= returnTo %>">Aktualisieren</a>
+    </div>
+
+    <% if (bulkDone) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: `${bulkDone} ${bulkDone === 1 ? 'Ticket' : 'Tickets'} aktualisiert.` }) %></div>
+    <% } %>
+
+    <div class="inbox">
+      <nav class="inbox__nav" aria-label="Ansichten">
+        <ul class="view-list" data-live-region="inbox-views">
+          <% viewList.forEach(([key, label, icon]) => { %>
+            <li>
+              <a class="view-list__item" href="/admin/tickets?view=<%= key %>" <%- filters.view === key ? 'aria-current="page"' : '' %>>
+                <%- include('../partials/icon', { name: icon, size: 15 }) %>
+                <span class="view-list__label"><%= label %></span>
+                <span class="view-list__count"><%= counts[key] %></span>
+              </a>
+            </li>
+          <% }); %>
+        </ul>
+      </nav>
+
+      <div class="inbox__main">
+        <form class="filters" action="/admin/tickets" method="GET" role="search" data-autosubmit>
+          <input type="hidden" name="view" value="<%= filters.view %>">
+          <% if (filters.isoFile) { %>
+            <input type="hidden" name="file" value="<%= filters.isoFile %>">
+            <span class="chip-filter"><%- include('../partials/icon', { name: 'disc', size: 13 }) %> <span class="mono"><%= filters.isoFile %></span></span>
+          <% } %>
+          <div class="search search--compact filters__search">
+            <%- include('../partials/icon', { name: 'search', size: 15, cls: 'search__icon' }) %>
+            <input class="input input--sm" type="search" name="q" value="<%= filters.q %>" placeholder="Suchen: #Nummer, Betreff, Kunde …" aria-label="Tickets durchsuchen">
+          </div>
+          <select class="input input--sm" name="category" aria-label="Kategorie">
+            <option value="">Kategorie</option>
+            <% categories.forEach(category => { %>
+              <option value="<%= category.id %>" <%= filters.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+            <% }); %>
+          </select>
+          <select class="input input--sm" name="priority" aria-label="Priorität">
+            <option value="">Priorität</option>
+            <% Object.entries(priorityLabels).forEach(([key, label]) => { %>
+              <option value="<%= key %>" <%= filters.priority === key ? 'selected' : '' %>><%= label %></option>
+            <% }); %>
+          </select>
+          <select class="input input--sm" name="sort" aria-label="Sortierung" data-sort-select>
+            <option value="updated" <%= filters.sort === 'updated' ? 'selected' : '' %>>Zuletzt aktiv</option>
+            <option value="created" <%= filters.sort === 'created' ? 'selected' : '' %>>Neueste</option>
+            <option value="oldest" <%= filters.sort === 'oldest' ? 'selected' : '' %>>Älteste</option>
+            <option value="priority" <%= filters.sort === 'priority' ? 'selected' : '' %>>Priorität</option>
+            <option value="due" <%= filters.sort === 'due' ? 'selected' : '' %>>Fälligkeit</option>
+            <option value="snooze" <%= filters.sort === 'snooze' ? 'selected' : '' %>>Wiedervorlage</option>
+          </select>
+          <button type="submit" class="btn btn--secondary btn--sm" data-autosubmit-button>Filtern</button>
+          <% if (hasFilters) { %>
+            <a class="btn btn--ghost btn--sm" href="/admin/tickets?view=<%= filters.view %>"><%- include('../partials/icon', { name: 'x', size: 14 }) %> Zurücksetzen</a>
+          <% } %>
+        </form>
+
+        <form class="card card--flush" action="/admin/tickets/bulk" method="POST" data-bulk-form>
+          <input type="hidden" name="returnTo" value="<%= returnTo %>">
+          <div class="inbox__head">
+            <label class="check check--compact">
+              <input type="checkbox" data-select-all aria-label="Alle auswählen">
+              <span class="inbox__title" data-live-region="inbox-title"><%= viewTitle %> <span class="text-muted">· <%= total %></span></span>
+            </label>
+            <div class="inbox__bulk" data-bulk-actions>
+              <span class="hint" data-bulk-count></span>
+              <select class="input input--sm" name="action" aria-label="Aktion für ausgewählte Tickets">
+                <option value="">Aktion …</option>
+                <option value="status:resolved">Als gelöst markieren</option>
+                <option value="status:closed" data-confirm="Geschlossene Tickets können Kunden nicht mehr beantworten — sie müssten ein neues eröffnen." data-confirm-title="Ausgewählte Tickets schließen?" data-confirm-ok="Schließen">Schließen</option>
+                <option value="status:open">Wieder öffnen</option>
+                <option value="read">Als gelesen markieren</option>
+                <optgroup label="Wiedervorlage">
+                  <% snoozePresets.forEach(preset => { %>
+                    <option value="snooze:<%= preset.key %>"><%= preset.label %> (<%= formatDateTime(preset.until) %>)</option>
+                  <% }); %>
+                  <option value="unsnooze">Wiedervorlage aufheben</option>
+                </optgroup>
+                <optgroup label="Priorität setzen">
+                  <% Object.entries(priorityLabels).forEach(([key, label]) => { %>
+                    <option value="priority:<%= key %>"><%= label %></option>
+                  <% }); %>
+                </optgroup>
+              </select>
+              <button type="submit" class="btn btn--secondary btn--sm">Anwenden</button>
+            </div>
+          </div>
+
+          <div data-live-region="inbox-list" data-live-guard-hover>
+          <% if (tickets.length === 0) { %>
+            <div class="empty">
+              <div class="empty__icon"><%- include('../partials/icon', { name: hasFilters ? 'search' : 'checkCircle', size: 20 }) %></div>
+              <p class="empty__title"><%= hasFilters ? 'Keine Treffer' : 'Alles erledigt' %></p>
+              <p class="empty__text"><%= hasFilters ? 'Kein Ticket passt zu diesen Filtern.' : 'In dieser Ansicht gibt es gerade keine Tickets.' %></p>
+            </div>
+          <% } else { %>
+            <ul class="ticket-list">
+              <% tickets.forEach(ticket => { %>
+                <li class="ticket-row<%= ticket.adminUnread ? ' is-unread' : '' %>" data-live-key="ticket-<%= ticket.number %>">
+                  <input class="ticket-row__select" type="checkbox" name="numbers" value="<%= ticket.number %>" aria-label="Ticket #<%= ticket.number %> auswählen">
+                  <a class="ticket-item ticket-row__link<%= ticket.adminUnread ? ' is-unread' : '' %>" href="/admin/tickets/<%= ticket.number %>">
+                    <span class="ticket-item__dot" aria-hidden="true"></span>
+                    <span class="ticket-item__main">
+                      <span class="ticket-item__subject"><%= ticket.subject %></span>
+                      <span class="ticket-item__meta">
+                        <span class="mono">#<%= ticket.number %></span>
+                        <span><%= ticket.requesterName || ticket.requesterEmail %></span>
+                        <% if (ticket.categoryName) { %><span><%= ticket.categoryName %></span><% } %>
+                        <% if (['high', 'urgent'].includes(ticket.priority)) { %><%- include('../partials/ticket-priority', { priority: ticket.priority }) %><% } %>
+                        <% if (ticket.isoFile) { %><span class="mono"><%= ticket.isoFile %></span><% } %>
+                        <% if (ticket.snoozedUntil && ticket.snoozedUntil > Date.now()) { %>
+                          <span class="snooze-chip" title="Wiedervorlage bis <%= formatDateTime(ticket.snoozedUntil) %>"><%- include('../partials/icon', { name: 'bell', size: 12 }) %> <%= formatDateTime(ticket.snoozedUntil) %></span>
+                        <% } %>
+                        <% const sla = slaState(ticket); if (sla && sla.state !== 'ok') { %>
+                          <span class="sla sla--<%= sla.state %>" title="Antwort fällig bis <%= formatDateTime(sla.dueAt) %>"><%= sla.label %></span>
+                        <% } %>
+                      </span>
+                    </span>
+                    <span class="ticket-item__side">
+                      <%- include('../partials/ticket-status-badge', { ticket, viewer: 'admin' }) %>
+                      <time class="ticket-item__time" datetime="<%= new Date(ticket.updatedAt).toISOString() %>" title="<%= formatDateTime(ticket.updatedAt) %>"><%= relativeTime(ticket.updatedAt) %></time>
+                    </span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+          </div>
+        </form>
+
+        <div data-live-region="inbox-pages">
+        <%- include('../partials/pagination', {
+          page, pages, baseUrl: '/admin/tickets',
+          params: { view: filters.view, q: filters.q, category: filters.categoryId, priority: filters.priority, sort: filters.sort, file: filters.isoFile },
+        }) %>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/composer.js') %>" defer></script>
+<script src="<%= asset('/js/ticket-live.js') %>" defer></script>
+</body>
+</html>

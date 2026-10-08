@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Berichte', stylesheets: ['/css/events.css'] }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<%
+  const fmtNum = n => Number(n || 0).toLocaleString('de-DE');
+  const pct = value => value === null ? '—' : `${(value * 100).toFixed(0)} %`;
+  const avgStars = report.csat.average ? report.csat.average.toFixed(1).replace('.', ',') : '—';
+  const distMax = entries => Math.max(1, ...entries.map(entry => entry.n));
+  const starsMax = Math.max(1, ...report.csat.distribution.map(entry => entry.n));
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header">
+      <h1 class="page-header__title">Berichte</h1>
+      <p class="page-header__meta">
+        <span><%= formatDate(report.from) %> – <%= formatDate(report.to - 1) %></span>
+        <span><%= zoneName(report.to) %></span>
+      </p>
+    </header>
+
+    <%- include('../partials/admin-ticket-nav', { current: 'reports' }) %>
+
+    <form class="report-range" action="/admin/reports" method="GET">
+      <nav class="tabs" aria-label="Zeitraum">
+        <% Object.entries(presets).forEach(([days, label]) => { %>
+          <a class="tab" href="/admin/reports?range=<%= days %>" <%- range.preset === days ? 'aria-current="page"' : '' %>><%= label %></a>
+        <% }); %>
+      </nav>
+      <div class="report-range__custom">
+        <label class="field">
+          <span class="label">Von</span>
+          <input class="input input--sm" type="date" name="from" value="<%= range.fromInput %>" required>
+        </label>
+        <label class="field">
+          <span class="label">Bis</span>
+          <input class="input input--sm" type="date" name="to" value="<%= range.toInput %>" required>
+        </label>
+        <button type="submit" class="btn btn--secondary btn--sm">Anzeigen</button>
+      </div>
+    </form>
+
+    <div data-live-region="report-kpis">
+      <div class="kpis">
+        <div class="kpi">
+          <span class="kpi__label">Neue Tickets</span>
+          <span class="kpi__value"><%= fmtNum(report.createdCount) %></span>
+          <span class="kpi__trend"><%= fmtNum(report.resolvedCount) %> gelöst</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Erstantwort (Median)</span>
+          <span class="kpi__value"><%= formatDuration(report.firstResponse.median) %></span>
+          <span class="kpi__trend">Ø <%= formatDuration(report.firstResponse.average) %> · <%= fmtNum(report.firstResponse.n) %> <%= report.firstResponse.n === 1 ? 'Ticket' : 'Tickets' %></span>
+        </div>
+        <div class="kpi">
+          <span class="kpi__label">Lösungszeit (Median)</span>
+          <span class="kpi__value"><%= formatDuration(report.resolution.median) %></span>
+          <span class="kpi__trend">Ø <%= formatDuration(report.resolution.average) %></span>
+        </div>
+        <a class="kpi <%= report.sla.missed > 0 ? 'kpi--alert' : '' %>" href="/admin/tickets?view=overdue">
+          <span class="kpi__label">Frist eingehalten</span>
+          <span class="kpi__value"><%= pct(report.sla.rate) %></span>
+          <span class="kpi__trend"><%= fmtNum(report.sla.hit) %> eingehalten · <%= fmtNum(report.sla.missed) %> verfehlt</span>
+        </a>
+        <div class="kpi">
+          <span class="kpi__label">Zufriedenheit</span>
+          <span class="kpi__value"><%= avgStars %><%= report.csat.average ? ' ★' : '' %></span>
+          <span class="kpi__trend"><%= fmtNum(report.csat.n) %> <%= report.csat.n === 1 ? 'Bewertung' : 'Bewertungen' %></span>
+        </div>
+      </div>
+      <p class="hint mb-4">Die Fristquote misst die Erstantwort gegen die <a href="/admin/ticket-settings#sla">aktuell eingestellten Fristen</a> — eine geänderte Frist gilt rückwirkend. Vom Support angelegte Tickets zählen hier nicht mit.</p>
+    </div>
+
+    <div class="charts" data-live-region="report-charts" data-live-guard-hover>
+      <section class="card" aria-labelledby="series-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="series-heading">Erstellt und gelöst</h2>
+          <span class="hint">je <%= report.weekly ? 'Woche' : 'Tag' %></span>
+        </div>
+        <div class="card__body">
+          <div class="chart__scroll">
+            <svg class="chart__svg" viewBox="-34 -8 <%= chart.width + 40 %> <%= chart.height + 28 %>" role="img"
+                 aria-label="Erstellte und gelöste Tickets im Zeitverlauf. Maximum <%= chart.max %> je Abschnitt.">
+              <% chart.gridlines.forEach(line => { %>
+                <line class="chart__grid" x1="0" x2="<%= chart.width %>" y1="<%= line.y %>" y2="<%= line.y %>"></line>
+                <text class="chart__tick" x="-6" y="<%= line.y + 3 %>" text-anchor="end"><%= fmtNum(line.value) %></text>
+              <% }); %>
+              <line class="chart__axis" x1="0" x2="<%= chart.width %>" y1="<%= chart.height %>" y2="<%= chart.height %>"></line>
+              <text class="chart__tick" x="-6" y="<%= chart.height + 3 %>" text-anchor="end">0</text>
+              <% chart.bars.forEach(bar => { %>
+                <g class="chart__bar">
+                  <title><%= bar.tooltip %></title>
+                  <rect class="chart__hit" x="<%= bar.hitX.toFixed(1) %>" y="0" width="<%= bar.slot.toFixed(1) %>" height="<%= chart.height %>"></rect>
+                  <% if (bar.created.h) { %><rect class="chart__col--created" x="<%= bar.created.x.toFixed(1) %>" y="<%= bar.created.y.toFixed(1) %>" width="<%= bar.created.w.toFixed(1) %>" height="<%= bar.created.h.toFixed(1) %>" rx="1.5"></rect><% } %>
+                  <% if (bar.resolved.h) { %><rect class="chart__col--resolved" x="<%= bar.resolved.x.toFixed(1) %>" y="<%= bar.resolved.y.toFixed(1) %>" width="<%= bar.resolved.w.toFixed(1) %>" height="<%= bar.resolved.h.toFixed(1) %>" rx="1.5"></rect><% } %>
+                  <% if (bar.label) { %>
+                    <text class="chart__tick" x="<%= bar.labelX.toFixed(1) %>" y="<%= chart.height + 16 %>" text-anchor="middle"><%= bar.label %></text>
+                  <% } %>
+                </g>
+              <% }); %>
+            </svg>
+          </div>
+          <div class="legend" aria-label="Legende">
+            <span class="legend__item"><span class="legend__swatch legend__swatch--created"></span> Erstellt <span class="legend__count"><%= fmtNum(report.createdCount) %></span></span>
+            <span class="legend__item"><span class="legend__swatch legend__swatch--resolved"></span> Gelöst <span class="legend__count"><%= fmtNum(report.resolvedCount) %></span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="stars-heading">
+        <div class="card__header"><h2 class="card__title" id="stars-heading">Bewertungen</h2></div>
+        <div class="card__body">
+          <ul class="dist stars-dist">
+            <% [...report.csat.distribution].reverse().forEach(entry => { %>
+              <li class="dist__row" title="<%= entry.stars %> <%= entry.stars === 1 ? 'Stern' : 'Sterne' %>: <%= entry.n %>">
+                <span class="dist__label rating-inline"><%= '★'.repeat(entry.stars) %></span>
+                <svg class="dist__bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true">
+                  <rect class="dist__track" x="0" y="0" width="100" height="8"></rect>
+                  <% if (entry.n) { %><rect class="dist__fill" x="0" y="0" width="<%= Math.max(1, (entry.n / starsMax) * 100).toFixed(1) %>" height="8"></rect><% } %>
+                </svg>
+                <span class="dist__value"><%= fmtNum(entry.n) %></span>
+              </li>
+            <% }); %>
+          </ul>
+        </div>
+      </section>
+    </div>
+
+    <div class="report-grid" data-live-region="report-dist">
+      <% [
+        ['Nach Kategorie', report.byCategory, null],
+        ['Nach Priorität', report.byPriority, null],
+        ['Nach Eingang', report.bySource, null],
+        ['Top-Dateien', report.byIsoFile, key => `/admin/tickets?view=all&file=${encodeURIComponent(key)}`],
+      ].forEach(([title, entries, linkFor]) => { %>
+        <section class="card">
+          <div class="card__header"><h2 class="card__title"><%= title %></h2></div>
+          <div class="card__body">
+            <% if (entries.length === 0) { %>
+              <p class="hint">Keine Tickets im Zeitraum.</p>
+            <% } else { const max = distMax(entries); %>
+              <ul class="dist">
+                <% entries.forEach(entry => { %>
+                  <li>
+                    <<%= linkFor ? 'a' : 'span' %> class="dist__row" <%- linkFor ? `href="${linkFor(entry.key).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"` : '' %> title="<%= entry.label %>: <%= entry.n %>">
+                      <span class="dist__label <%= linkFor ? 'mono' : '' %>"><%= entry.label %></span>
+                      <svg class="dist__bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true">
+                        <rect class="dist__track" x="0" y="0" width="100" height="8"></rect>
+                        <rect class="dist__fill" x="0" y="0" width="<%= Math.max(1, (entry.n / max) * 100).toFixed(1) %>" height="8"></rect>
+                      </svg>
+                      <span class="dist__value"><%= fmtNum(entry.n) %></span>
+                    </<%= linkFor ? 'a' : 'span' %>>
+                  </li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </section>
+      <% }); %>
+    </div>
+
+    <div class="report-grid" data-live-region="report-lists">
+      <section class="card">
+        <div class="card__header"><h2 class="card__title">Kommentare aus Bewertungen</h2></div>
+        <div class="card__body">
+          <% if (report.comments.length === 0) { %>
+            <p class="hint">Keine Kommentare im Zeitraum.</p>
+          <% } else { %>
+            <ul class="report-comments">
+              <% report.comments.forEach(entry => { %>
+                <li>
+                  <span class="rating-inline"><%= '★'.repeat(entry.rating) %><%= '☆'.repeat(5 - entry.rating) %></span>
+                  „<%= entry.comment %>“
+                  <span class="report-comments__meta"><a href="/admin/tickets/<%= entry.number %>">#<%= entry.number %> <%= entry.subject %></a> · <%= formatDate(entry.ratedAt) %></span>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card__header"><h2 class="card__title">Meistgelesene Hilfeartikel</h2></div>
+        <div class="card__body">
+          <% if (report.topArticles.length === 0) { %>
+            <p class="hint">Noch keine Aufrufe. <a href="/admin/kb">Hilfeartikel verwalten</a></p>
+          <% } else { %>
+            <ul class="kb-list">
+              <% report.topArticles.forEach(article => { %>
+                <li class="kb-list__item">
+                  <a class="kb-list__link" href="/support/articles/<%= article.slug %>">
+                    <span class="kb-list__title"><%= article.title %></span>
+                    <span class="kb-list__excerpt"><%= fmtNum(article.views) %> <%= article.views === 1 ? 'Aufruf' : 'Aufrufe' %> (gesamt)</span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

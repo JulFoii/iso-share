@@ -1,0 +1,7 @@
+<%
+/* Der komplette Verlauf eines Tickets — auch als Live-Update-Fragment
+   (…/updates) gerendert, darum ein eigenes Partial. */
+%>
+<% messages.forEach(message => { %>
+  <%- include('ticket-message', { message, ticket, viewer }) %>
+<% }); %>

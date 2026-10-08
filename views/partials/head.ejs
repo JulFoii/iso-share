@@ -1,10 +1,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
+<meta name="app-time-zone" content="<%= appTimeZone %>">
 <title><%= title %> · ISO Share</title>
 <meta name="description" content="<%= typeof description !== 'undefined' ? description : 'ISO Share — ISO-Images einfach und sicher teilen.' %>">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/css/tokens.css">
-<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="<%= asset('/css/tokens.css') %>">
+<link rel="stylesheet" href="<%= asset('/css/main.css') %>">
+<link rel="stylesheet" href="<%= asset('/css/tickets.css') %>">
+<% (typeof stylesheets !== 'undefined' ? stylesheets : []).forEach(sheet => { %>
+<link rel="stylesheet" href="<%= asset(sheet) %>">
+<% }); %>
 <!-- Muss blockierend laufen: setzt das Theme vor dem ersten Paint -->
-<script src="/js/theme-init.js"></script>
+<script src="<%= asset('/js/theme-init.js') %>"></script>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('partials/head', { title: article.title, description: article.excerpt }) %>
+  <% if (!article.published) { %><meta name="robots" content="noindex"><% } %>
+</head>
+<%# data-live-url: ein Umbenennen des Slugs fuehrt zu 404, dann hoert das Polling auf. %>
+<body data-live-page data-live-url="/support/articles/<%= article.slug %>">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('partials/navbar', { page: 'support' }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <a class="back-link" href="/support"><%- include('partials/icon', { name: 'arrowLeft', size: 14 }) %> Hilfe</a>
+
+    <div data-live-region="kb-article">
+    <% if (!article.published) { %>
+      <div class="mb-4"><%- include('partials/alert', { variant: 'info', text: 'Entwurf — nur für den Admin sichtbar.' }) %></div>
+    <% } %>
+
+    <article class="card">
+      <div class="card__body">
+        <header class="page-header">
+          <% if (article.categoryName) { %><p class="eyebrow"><%= article.categoryName %></p><% } %>
+          <h1 class="page-header__title"><%= article.title %></h1>
+          <p class="page-header__meta"><span>Aktualisiert am <%= formatDate(article.updatedAt) %></span></p>
+        </header>
+        <%# html stammt aus lib/markdown.js renderMarkdown(): der Text wird dort vollstaendig escaped, bevor Tags entstehen %>
+        <div class="prose"><%- html %></div>
+      </div>
+      <div class="card__footer">
+        <span class="hint">Hat das nicht geholfen?</span>
+        <% if (isAdmin) { %>
+          <a class="btn btn--secondary btn--sm" href="/admin/kb/<%= article.id %>"><%- include('partials/icon', { name: 'settings', size: 14 }) %> Bearbeiten</a>
+        <% } else { %>
+          <a class="btn btn--primary btn--sm" href="/account/tickets/new"><%- include('partials/icon', { name: 'plus', size: 14 }) %> Ticket anlegen</a>
+        <% } %>
+      </div>
+    </article>
+
+    <% if (related.length) { %>
+      <section class="card mt-4" aria-labelledby="related-heading">
+        <div class="card__header"><h2 class="card__title" id="related-heading">Ähnliche Artikel</h2></div>
+        <div class="card__body">
+          <ul class="kb-list">
+            <% related.forEach(other => { %>
+              <li class="kb-list__item"><a class="kb-list__link" href="/support/articles/<%= other.slug %>"><span class="kb-list__title"><%= other.title %></span></a></li>
+            <% }); %>
+          </ul>
+        </div>
+      </section>
+    <% } %>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

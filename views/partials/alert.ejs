@@ -1,0 +1,9 @@
+<%
+/* Hinweisbox. include('partials/alert', { variant: 'danger'|'success'|'info', text }) */
+const alertVariant = typeof variant !== 'undefined' && variant ? variant : 'info';
+const alertIcon = alertVariant === 'success' ? 'checkCircle' : alertVariant === 'danger' ? 'alert' : 'info';
+%>
+<div class="alert alert--<%= alertVariant %>" role="<%= alertVariant === 'danger' ? 'alert' : 'status' %>">
+  <%- include('icon', { name: alertIcon, size: 16 }) %>
+  <span><%= text %></span>
+</div>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<%# Auch fuer Admin-Seiten (nicht gefundenes Ticket/Kunde/Artikel): dann mit Admin-Navigation %>
+<%- include('../partials/navbar', { page: typeof page !== 'undefined' ? page : 'support', loggedIn: typeof loggedIn !== 'undefined' && loggedIn }) %>
+
+<main class="auth" id="main">
+  <div class="auth__card">
+    <div class="card">
+      <div class="card__body notice">
+        <span class="notice__icon notice__icon--<%= typeof variant !== 'undefined' ? variant : 'info' %>">
+          <%- include('../partials/icon', { name: typeof variant === 'undefined' ? 'info' : variant === 'success' ? 'checkCircle' : variant === 'danger' ? 'alert' : 'mail', size: 22 }) %>
+        </span>
+        <h1 class="notice__title"><%= title %></h1>
+        <p class="notice__text"><%= text %></p>
+        <% if (typeof action !== 'undefined' && action) { %>
+          <a class="btn btn--primary" href="<%= action.href %>"><%= action.label %></a>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</main>
+
+<%# Nur fuer den Ticket-Zaehler der Navigation (GET /partials/nav) %>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<% if (typeof loggedIn !== 'undefined' && loggedIn) { %><script src="<%= asset('/js/idle-timer.js') %>" defer></script><% } %>
+</body>
+</html>

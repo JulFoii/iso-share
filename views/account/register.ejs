@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Kundenkonto erstellen', description: 'Ein Konto für das Support-Portal von ISO Share anlegen.' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<%- include('../partials/navbar', { page: 'support' }) %>
+
+<main class="auth" id="main">
+  <div class="auth__card auth__card--wide">
+    <div class="auth__head">
+      <span class="auth__logo"><%- include('../partials/icon', { name: 'user', size: 18 }) %></span>
+      <h1 class="auth__title">Konto erstellen</h1>
+      <p class="auth__subtitle">Mit einem Konto legst du Tickets an, verfolgst den Verlauf und bekommst Antworten per E-Mail.</p>
+    </div>
+
+    <div class="card">
+      <div class="card__body stack stack--sm">
+        <% if (error) { %>
+          <%- include('../partials/alert', { variant: 'danger', text: error }) %>
+        <% } %>
+
+        <form class="stack stack--sm" action="/account/register" method="POST">
+          <div class="field">
+            <label class="label" for="name">Name</label>
+            <input class="input" type="text" id="name" name="name" value="<%= values.name || '' %>" maxlength="80" autocomplete="name" required autofocus>
+          </div>
+          <div class="field">
+            <label class="label" for="email">E-Mail-Adresse</label>
+            <input class="input" type="email" id="email" name="email" value="<%= values.email || '' %>" autocomplete="email" required>
+            <span class="hint">An diese Adresse schicken wir den Bestätigungslink und Antworten auf deine Tickets.</span>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label class="label" for="password">Passwort</label>
+              <input class="input" type="password" id="password" name="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+            </div>
+            <div class="field">
+              <label class="label" for="passwordConfirm">Wiederholen</label>
+              <input class="input" type="password" id="passwordConfirm" name="passwordConfirm" minlength="10" maxlength="200" autocomplete="new-password" required>
+            </div>
+          </div>
+          <span class="hint">Mindestens 10 Zeichen. Ein Satz aus mehreren Wörtern ist sicherer als ein kurzes, kompliziertes Passwort.</span>
+
+          <label class="check">
+            <input type="checkbox" name="privacy" value="1" required>
+            <span>Ich habe die <a href="/privacy" target="_blank" rel="noopener">Datenschutzerklärung</a> gelesen und bin mit der Speicherung meiner Angaben zur Bearbeitung meiner Anfragen einverstanden.</span>
+          </label>
+
+          <!-- Honeypot, siehe POST /account/register -->
+          <div class="visually-hidden" aria-hidden="true">
+            <label for="website">Website</label>
+            <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+          </div>
+
+          <button type="submit" class="btn btn--primary btn--block">Konto erstellen</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="auth__footer">Schon registriert? <a href="/account/login">Anmelden</a></p>
+  </div>
+</main>
+
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

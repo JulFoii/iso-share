@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Kunden' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header">
+      <h1 class="page-header__title">Kunden</h1>
+      <p class="page-header__meta" data-live-region="customers-meta"><span><%= total %> <%= total === 1 ? 'Konto' : 'Konten' %></span></p>
+    </header>
+
+    <%- include('../partials/admin-ticket-nav', { current: 'customers' }) %>
+
+    <% if (done === 'deleted') { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: 'Kundenkonto samt Tickets gelöscht.' }) %></div><% } %>
+    <% if (!mailEnabled) { %>
+      <div class="mb-4"><%- include('../partials/alert', { variant: 'info', text: 'Mailversand ist deaktiviert: Neue Konten können ihre Adresse nicht selbst bestätigen — schalte sie im jeweiligen Kundenprofil frei.' }) %></div>
+    <% } %>
+
+    <div class="toolbar">
+      <form class="search search--compact" action="/admin/customers" method="GET" role="search">
+        <%- include('../partials/icon', { name: 'search', size: 15, cls: 'search__icon' }) %>
+        <input class="input input--sm" type="search" name="q" value="<%= q %>" placeholder="Name oder E-Mail …" aria-label="Kunden durchsuchen">
+      </form>
+    </div>
+
+    <div class="card card--flush" data-live-region="customers-list" data-live-guard-hover>
+      <% if (customers.length === 0) { %>
+        <div class="empty">
+          <div class="empty__icon"><%- include('../partials/icon', { name: 'users', size: 20 }) %></div>
+          <p class="empty__title"><%= q ? 'Keine Treffer' : 'Noch keine Kunden' %></p>
+          <p class="empty__text">Kunden registrieren sich selbst über das <a href="/support">Support-Portal</a>.</p>
+        </div>
+      <% } else { %>
+        <div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">E-Mail</th>
+                <th scope="col">Status</th>
+                <th scope="col" class="table__num">Tickets</th>
+                <th scope="col" class="table__num">Registriert</th>
+                <th scope="col" class="table__num">Letzte Anmeldung</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% customers.forEach(customer => { %>
+                <tr data-live-key="customer-<%= customer.id %>">
+                  <td data-label="Name"><a href="/admin/customers/<%= customer.id %>"><%= customer.name %></a></td>
+                  <td data-label="E-Mail" class="mono"><%= customer.email %></td>
+                  <td data-label="Status">
+                    <% if (customer.disabled) { %><span class="badge badge--danger">Gesperrt</span>
+                    <% } else if (customer.emailVerified) { %><span class="badge badge--ok">Aktiv</span>
+                    <% } else { %><span class="badge badge--warning">Unbestätigt</span><% } %>
+                  </td>
+                  <td data-label="Tickets" class="table__num"><%= customer.ticketCount %></td>
+                  <td data-label="Registriert" class="table__num"><%= formatDate(customer.createdAt) %></td>
+                  <td data-label="Letzte Anmeldung" class="table__num"><%= customer.lastLoginAt ? relativeTime(customer.lastLoginAt) : '—' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+
+    <div data-live-region="customers-pages"><%- include('../partials/pagination', { page, pages, baseUrl: '/admin/customers', params: { q } }) %></div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>
