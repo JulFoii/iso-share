@@ -7,10 +7,18 @@ FROM node:24.18-alpine
 
 WORKDIR /app
 
+# Sicherheitsupdates der Alpine-Pakete (z. B. OpenSSL), die neuer sind als
+# das gepinnte Basis-Image
+RUN apk upgrade --no-cache
+
 # Erst nur die Paketdateien, damit der npm-ci-Layer bei reinen Code-
-# Aenderungen aus dem Cache kommt
+# Aenderungen aus dem Cache kommt. Danach fliegen npm und corepack raus:
+# gestartet wird direkt mit node, und das mitgelieferte npm bringt eigene
+# verwundbare Abhaengigkeiten (tar, undici, ...) ins Image.
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /root/.npm
 
 # Anwendungscode — was NICHT ins Image darf (data/, uploads/, .env, ...)
 # regelt .dockerignore
