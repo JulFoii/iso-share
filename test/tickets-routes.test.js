@@ -564,7 +564,7 @@ test('Betreff wird einzeilig gespeichert; "Status danach: Neu" wird ignoriert; T
 });
 
 test('Anhaenge: abgelaufene Admin-Sitzung (Idle-Timeout) zaehlt nicht mehr als Admin', async t => {
-    const app = await startTicketApp({ adminIdleTimeoutMs: 200 });
+    const app = await startTicketApp({ adminIdleTimeoutMs: 1000 });
     t.after(() => app.close());
     const cookie = await registerCustomer(app);
     await createTicket(app, cookie, { files: [['screen.png', PNG]] });
@@ -574,7 +574,7 @@ test('Anhaenge: abgelaufene Admin-Sitzung (Idle-Timeout) zaehlt nicht mehr als A
     const fresh = await fetch(app.url(`/attachments/${attachment.id}`), { headers: { Cookie: admin } });
     assert.equal(fresh.status, 200);
     assert.match(fresh.headers.get('content-disposition'), /^inline; filename="screen\.png"; filename\*=UTF-8''screen\.png$/);
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 1200));
     assert.equal((await fetch(app.url(`/attachments/${attachment.id}`), { headers: { Cookie: admin } })).status, 404);
 });
 

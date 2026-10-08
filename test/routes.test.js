@@ -355,7 +355,7 @@ test('Login: falsches Passwort 401, richtiges setzt eine Sitzung', async t => {
 });
 
 test('Admin-Idle-Timeout: Sitzung wird nach Inaktivitaet verworfen und muss sich neu anmelden', async t => {
-    const app = await startTestApp({ adminIdleTimeoutMs: 500 });
+    const app = await startTestApp({ adminIdleTimeoutMs: 1500 });
     t.after(() => app.close());
 
     const { cookie } = await app.login();
@@ -365,7 +365,7 @@ test('Admin-Idle-Timeout: Sitzung wird nach Inaktivitaet verworfen und muss sich
     });
     assert.equal(stillActive.status, 200, 'innerhalb des Idle-Fensters bleibt die Sitzung gueltig');
 
-    await new Promise(resolve => setTimeout(resolve, 700));
+    await new Promise(resolve => setTimeout(resolve, 1700));
 
     const idled = await fetch(app.url('/admin-upload'), {
         headers: { Cookie: cookie },
@@ -430,20 +430,22 @@ test('Normales /logout (ohne idle=1) landet weiterhin auf der oeffentlichen Star
 });
 
 test('/admin/ping verlaengert den Idle-Timeout, /admin/partials/listing mit X-Idle-Background nicht', async t => {
-    const app = await startTestApp({ adminIdleTimeoutMs: 500 });
+    // Grosszuegige Abstaende: auf langsamen CI-Runnern dauert allein der Login
+    // mehrere hundert ms, ein enges Fenster liess die Sitzung vor dem Ping ablaufen.
+    const app = await startTestApp({ adminIdleTimeoutMs: 1500 });
     t.after(() => app.close());
 
     const { cookie } = await app.login();
 
     // Ein als Hintergrund markierter Poll (wie ihn heartbeat.js schickt)
     // darf die Sitzung nicht ueber das Idle-Fenster hinaus retten.
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 500));
     const heartbeatPoll = await fetch(app.url('/admin/partials/listing'), {
         headers: { Cookie: cookie, Accept: 'application/json', 'X-Idle-Background': '1' },
     });
     assert.equal(heartbeatPoll.status, 200);
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 1100));
     const idledDespitePolling = await fetch(app.url('/admin-upload'), {
         headers: { Cookie: cookie },
         redirect: 'manual',
@@ -454,13 +456,13 @@ test('/admin/ping verlaengert den Idle-Timeout, /admin/partials/listing mit X-Id
     // Ein echter Keepalive-Ping (wie ihn idle-timer.js bei Aktivitaet
     // schickt) verlaengert die Sitzung dagegen wirklich.
     const { cookie: freshCookie } = await app.login();
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 750));
     const ping = await fetch(app.url('/admin/ping'), {
         headers: { Cookie: freshCookie },
     });
     assert.equal(ping.status, 204);
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 1100));
     const stillAliveAfterPing = await fetch(app.url('/admin-upload'), {
         headers: { Cookie: freshCookie },
         redirect: 'manual',
