@@ -64,7 +64,7 @@ jobs:
         if: failure()
         run: docker logs iso-share-smoke || true
       - name: Image-Scan (Trivy)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: iso-share:ci
           severity: CRITICAL,HIGH
