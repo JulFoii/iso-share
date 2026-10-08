@@ -1,29 +1,90 @@
-version: '3.8'
+# Produktivbetrieb: siehe OPERATIONS.md (Go-live-Checkliste).
+#
+#   docker compose --profile tls up -d   # mit mitgeliefertem Caddy (TLS, Let's Encrypt)
+#   docker compose up -d                 # nur die App — eigener Reverse Proxy auf dem Host
+#
+# Die App lauscht in beiden Faellen nur auf 127.0.0.1:3000 bzw. im internen
+# Compose-Netz; Node selbst terminiert kein TLS und darf nie direkt aus dem
+# Internet erreichbar sein.
 
 services:
   iso-share:
     build: .
+    image: iso-share:latest
     container_name: iso-share-app
+    # Nur lokal gebunden — nach aussen spricht ausschliesslich der Proxy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./uploads:/app/uploads
       # Die SQLite-Datenbank (data/iso-share.db) haelt Sitzungen, Datei-
-      # Metadaten, Zugangsdaten, Passkeys, TOTP und das Audit-Log ueber einen
-      # Neustart hinweg. Der Volume-Name ist historisch (vor dem Umstieg auf
-      # SQLite lagen hier nur die Sitzungsdateien) und bewusst nicht
-      # umbenannt, damit ein bestehendes Volume weiter eingehaengt wird.
+      # Metadaten, Zugangsdaten, Passkeys, TOTP, Tickets und das Audit-Log,
+      # dazu data/backups/ und data/ticket-attachments/. Der Volume-Name ist
+      # historisch (vor SQLite lagen hier nur Sitzungsdateien) und bewusst
+      # nicht umbenannt, damit ein bestehendes Volume weiter eingehaengt wird.
       - iso-share-sessions:/app/data
     environment:
       - NODE_ENV=production
-      # Ohne gesetzte Werte generiert der Server sichere Zufallswerte und loggt
-      # das Admin-Passwort einmalig. Für feste Zugangsdaten hier bzw. per .env
-      # setzen — keine schwachen Platzhalter mehr.
+      # Anzahl der Proxy-Hops vor der App. Pflicht im Produktivbetrieb, sonst
+      # setzt Express das secure-Session-Cookie nie (Start bricht dann ab).
+      - TRUST_PROXY=${TRUST_PROXY:-1}
+      # Bootstrap-once: nur beim allerersten Start gelesen, danach gilt die DB
+      # (siehe CLAUDE.md). Leer = sicherer Zufallswert, Passwort einmalig im Log.
       - SESSION_SECRET=${SESSION_SECRET:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      # Obergrenze je Upload in MB (Default 8192)
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-}
       - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-8192}
+      # Logging: json (Default in production) oder pretty; Level debug|info|warn|error
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Schuetzt /metrics per Authorization: Bearer <token> (empfohlen)
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+      # Wartezeit fuer laufende Requests beim Stoppen (< stop_grace_period)
+      - SHUTDOWN_TIMEOUT_MS=${SHUTDOWN_TIMEOUT_MS:-30000}
+      # Loeschfristen in Tagen (0 = aus), siehe lib/retention.js
+      - AUDIT_LOG_RETENTION_DAYS=${AUDIT_LOG_RETENTION_DAYS:-90}
+      - UNVERIFIED_ACCOUNT_RETENTION_DAYS=${UNVERIFIED_ACCOUNT_RETENTION_DAYS:-30}
+      - CLOSED_TICKET_RETENTION_DAYS=${CLOSED_TICKET_RETENTION_DAYS:-0}
+      # Mindestens so viel Platz muss nach einem Upload frei bleiben (MB)
+      - MIN_FREE_DISK_MB=${MIN_FREE_DISK_MB:-1024}
+      # Ticketsystem: oeffentliche https-Adresse fuer Links in Mails (Pflicht,
+      # sobald SMTP aktiv ist), Versand per SMTP, optional Antworten per IMAP.
+      - PUBLIC_URL=${PUBLIC_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_SECURE=${SMTP_SECURE:-true}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - TICKET_NOTIFY_EMAIL=${TICKET_NOTIFY_EMAIL:-}
+      - TICKET_ATTACHMENT_MAX_MB=${TICKET_ATTACHMENT_MAX_MB:-10}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_SECURE=${IMAP_SECURE:-true}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASS=${IMAP_PASS:-}
+      - IMAP_MAILBOX=${IMAP_MAILBOX:-INBOX}
+      - IMAP_POLL_SECONDS=${IMAP_POLL_SECONDS:-60}
+      - IMAP_PROCESSED_MAILBOX=${IMAP_PROCESSED_MAILBOX:-}
+      - IMAP_AUTHSERV_ID=${IMAP_AUTHSERV_ID:-}
+      - SUPPORT_REPLY_TO=${SUPPORT_REPLY_TO:-}
     restart: unless-stopped
+    # tini als PID 1: reicht SIGTERM sauber weiter und raeumt Zombies ab
+    init: true
+    # Zeit fuer laufende Downloads/Uploads beim Stoppen, siehe lib/lifecycle.js
+    # (SHUTDOWN_TIMEOUT_MS muss darunter bleiben)
+    stop_grace_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -31,6 +92,36 @@ services:
       retries: 3
       start_period: 40s
 
+  # Optionaler TLS-Terminator: holt automatisch ein Let's-Encrypt-Zertifikat
+  # fuer $DOMAIN. Aktivieren mit `--profile tls`.
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["tls"]
+    container_name: iso-share-caddy
+    depends_on:
+      iso-share:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Pflicht mit --profile tls, z. B. DOMAIN=iso.example.com in der .env
+      # (kein ${DOMAIN:?}, das wuerde auch ohne das Profil jeden Start abbrechen)
+      - DOMAIN=${DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
 volumes:
   iso-share-sessions:
     driver: local
+  caddy-data:
+  caddy-config:

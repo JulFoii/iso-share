@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head', { title: 'Datenschutzerklärung', description: 'Datenschutzerklärung von ISO Share.' }) %>
 </head>
-<body>
+<body data-live-page>
 <a class="skip-link" href="#main">Zum Inhalt springen</a>
 <%- include('partials/navbar', { page: 'privacy', loggedIn }) %>
 
@@ -40,9 +40,12 @@
       <h2 id="daten">2. Erhebung und Speicherung personenbezogener Daten</h2>
       <p>Bei der Nutzung dieser Website werden folgende Daten verarbeitet:</p>
       <ul>
-        <li><strong>Logfiles:</strong> IP-Adresse, Browsertyp, Betriebssystem, Referrer-URL, Zeitpunkt des Zugriffs</li>
-        <li><strong>Cookies:</strong> ein technisch notwendiges Session-Cookie für die Admin-Anmeldung</li>
+        <li><strong>Logfiles:</strong> IP-Adresse, Browserkennung (User-Agent, daraus Browsertyp und Betriebssystem), aufgerufene Seite ohne Parameter, Zeitpunkt und Ergebnis des Zugriffs</li>
+        <li><strong>Cookies:</strong> ein technisch notwendiges Session-Cookie für die Anmeldung (Admin-Bereich bzw. Support-Konto)</li>
         <li><strong>Upload-Daten:</strong> Dateiname und Größe hochgeladener ISO-Dateien</li>
+        <li><strong>Support-Konto:</strong> bei der Registrierung im Support-Portal Name, E-Mail-Adresse und ein Passwort (nur als gesalzener Hash gespeichert), Zeitpunkte von Registrierung, Bestätigung und letzter Anmeldung sowie deine Einstellungen zu E-Mail-Benachrichtigungen</li>
+        <li><strong>Tickets:</strong> Betreff, Nachrichten, Kategorie, Dringlichkeit, angehängte Dateien und eine optionale Zufriedenheitsbewertung — zur Bearbeitung deiner Anfrage durch den Betreiber. Antwortest du per E-Mail auf eine Benachrichtigung, wird der Inhalt dieser E-Mail (ohne zitierten Verlauf) samt Anhängen ins Ticket übernommen</li>
+        <li><strong>E-Mails:</strong> Bestätigungs-, Sicherheits- und Ticket-Benachrichtigungen werden über den vom Betreiber konfigurierten Mailserver verschickt; verschickte Mails bleiben höchstens 30 Tage in der Versand-Warteschlange gespeichert</li>
       </ul>
       <p>Es werden keine Analyse-, Tracking- oder Marketing-Dienste eingesetzt. Alle Schriftarten, Skripte und Stylesheets werden vom eigenen Server ausgeliefert — es findet keine Verbindung zu externen Content-Delivery-Netzwerken statt.</p>
 
@@ -58,7 +61,8 @@
       <p>Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse) zur ordnungsgemäßen Bereitstellung der Website-Funktionalitäten.</p>
 
       <h2 id="speicherdauer">5. Speicherdauer</h2>
-      <p>Logfiles werden nach 30 Tagen automatisch gelöscht. Session-Cookies werden nach Beendigung der Browser-Sitzung gelöscht. Hochgeladene Dateien werden bis zur manuellen Löschung gespeichert.</p>
+      <%# Die Fristen kommen aus der laufenden Konfiguration (lib/retention.js), damit der Text nie etwas anderes verspricht, als die App tatsächlich tut. %>
+      <p data-live-region="retention"><% const logDays = eventRetention(); %><% if (logDays.min === null) { %>Logfiles werden nicht automatisch gelöscht.<% } else if (logDays.max === null) { %>Logfiles werden je nach Art des Eintrags frühestens nach <%= logDays.min %> Tagen automatisch gelöscht; einzelne Arten von Einträgen werden ohne feste Frist aufbewahrt.<% } else if (logDays.min === logDays.max) { %>Logfiles werden nach <%= logDays.min %> Tagen automatisch gelöscht.<% } else { %>Logfiles werden je nach Art des Eintrags nach <%= logDays.min %> bis <%= logDays.max %> Tagen automatisch gelöscht (gewöhnliche Zugriffe nach <%= logDays.info %> Tagen, Fehlermeldungen länger zur Fehleranalyse).<% } %><% if (logDays.archiveDays !== null) { %> Vor dem Löschen archivierte Logfiles werden nach <%= logDays.archiveDays %> Tagen gelöscht.<% } %><% if (retentionPolicy.auditLogDays > 0) { %> Das Sicherheitsprotokoll (Anmeldungen, Uploads, Kontoänderungen, jeweils mit IP-Adresse) wird nach <%= retentionPolicy.auditLogDays %> Tagen automatisch gelöscht.<% } %> Session-Cookies werden nach Beendigung der Browser-Sitzung gelöscht. Hochgeladene Dateien werden bis zur manuellen Löschung gespeichert.<% if (retentionPolicy.unverifiedAccountDays > 0) { %> Support-Konten, deren E-Mail-Adresse nicht innerhalb von <%= retentionPolicy.unverifiedAccountDays %> Tagen bestätigt wurde, werden automatisch gelöscht.<% } %><% if (retentionPolicy.closedTicketDays > 0) { %> Geschlossene Tickets werden <%= retentionPolicy.closedTicketDays %> Tage nach ihrer Schließung samt Nachrichten und Anhängen automatisch gelöscht.<% } %> Support-Konten und Tickets bleiben<% if (retentionPolicy.closedTicketDays > 0) { %> ansonsten<% } %> gespeichert, bis du dein Konto löschst (jederzeit selbst möglich unter „Konto“ → „Daten &amp; Löschung“, inklusive aller Tickets und Anhänge) oder der Betreiber sie löscht. Dort kannst du auch jederzeit einen vollständigen Datenexport herunterladen.</p>
 
       <h2 id="rechte">6. Deine Rechte</h2>
       <p>Du hast das Recht auf:</p>
@@ -88,7 +92,8 @@
 
 <%- include('partials/footer') %>
 
-<script src="/js/theme.js" defer></script>
-<script src="/js/idle-timer.js" defer></script>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
 </body>
 </html>

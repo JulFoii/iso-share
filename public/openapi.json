@@ -157,7 +157,8 @@
           "replaces": { "type": "string", "description": "Optional: Name einer bestehenden Datei, die nach Erfolg gelöscht wird." }
         }, "required": ["name", "size"] } } } },
         "responses": {
-          "201": { "description": "Erstellt oder fortgesetzt", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/UploadSession" } } } } } }
+          "201": { "description": "Erstellt oder fortgesetzt", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/UploadSession" } } } } } },
+          "507": { "description": "Nicht genug Speicherplatz auf dem Server (code: insufficient_storage). Nach dem Freigeben von Platz erneut aufrufen — eine bestehende Sitzung wird fortgesetzt." }
         }
       }
     },

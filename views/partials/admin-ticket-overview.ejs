@@ -1,0 +1,22 @@
+<%# Ticket-Kennzahlen und juengste Tickets auf admin.ejs — eigenes Partial,
+    weil heartbeat.js sie ueber GET /admin/partials/listing nachgeliefert
+    bekommt (Live-Bereich "ticket-overview", siehe live-regions.js). %>
+<div class="kpis kpis--inline">
+  <a class="kpi" href="/admin/tickets?view=new"><span class="kpi__label">Unbeantwortet</span><span class="kpi__value"><%= ticketStats.views.new %></span></a>
+  <a class="kpi" href="/admin/tickets?view=open"><span class="kpi__label">Kunde hat geantwortet</span><span class="kpi__value"><%= ticketStats.views.open %></span></a>
+  <a class="kpi" href="/admin/tickets?view=pending"><span class="kpi__label">Wartet auf Kunde</span><span class="kpi__value"><%= ticketStats.views.pending %></span></a>
+  <a class="kpi" href="/admin/customers"><span class="kpi__label">Kundenkonten</span><span class="kpi__value"><%= customerCount %></span></a>
+</div>
+<% if (recentTickets.length === 0) { %>
+  <p class="hint">Keine offenen Tickets. Kunden erreichen den Support über das <a href="/support">Support-Portal</a>.</p>
+<% } else { %>
+  <ul class="mini-list">
+    <% recentTickets.forEach(ticket => { %>
+      <li>
+        <a href="/admin/tickets/<%= ticket.number %>"><span class="mono">#<%= ticket.number %></span> <%= ticket.subject %></a>
+        <span class="hint"><%= ticket.requesterName || ticket.requesterEmail %> · <%= relativeTime(ticket.updatedAt) %></span>
+        <%- include('ticket-status-badge', { ticket, viewer: 'admin' }) %>
+      </li>
+    <% }); %>
+  </ul>
+<% } %>

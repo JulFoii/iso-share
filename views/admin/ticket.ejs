@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: `#${ticket.number} ${ticket.subject}` }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/admin/tickets/<%= ticket.number %>">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container">
+    <a class="back-link" href="/admin/tickets"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Posteingang</a>
+
+    <header class="ticket-head">
+      <div class="ticket-head__main">
+        <p class="ticket-head__number mono">#<%= ticket.number %></p>
+        <h1 class="ticket-head__title"><%= ticket.subject %></h1>
+        <p class="ticket-meta">
+          <span data-live-status><%- include('../partials/ticket-status-badge', { ticket, viewer: 'admin' }) %></span>
+          <span class="ticket-meta__item" data-live-region="ticket-priority"><%- include('../partials/ticket-priority', { priority: ticket.priority }) %></span>
+          <span class="ticket-meta__item" data-live-region="ticket-requester"><%- include('../partials/icon', { name: 'user', size: 13 }) %> <%= ticket.requesterName || ticket.requesterEmail %></span>
+          <span class="ticket-meta__item">erstellt <%= formatDateTime(ticket.createdAt) %><% if (ticket.source !== 'web') { %> · via <%= sourceLabels[ticket.source] %><% } %></span>
+          <span class="ticket-meta__item" data-live-region="ticket-snooze-badge">
+            <% if (ticket.snoozedUntil && ticket.snoozedUntil > Date.now()) { %>
+              <span class="snooze-chip"><%- include('../partials/icon', { name: 'bell', size: 13 }) %> Wiedervorlage <%= formatDateTime(ticket.snoozedUntil) %></span>
+            <% } %>
+          </span>
+          <span class="ticket-meta__item" data-live-region="ticket-sla">
+            <% const sla = slaState(ticket); if (sla) { %>
+              <span class="sla sla--<%= sla.state %>" title="Antwort fällig bis <%= formatDateTime(sla.dueAt) %>"><%- include('../partials/icon', { name: 'clock', size: 13 }) %> <%= sla.label %></span>
+            <% } %>
+          </span>
+        </p>
+      </div>
+    </header>
+
+    <% if (typeof snoozeNotice !== 'undefined' && snoozeNotice) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: snoozeNotice === 'set' ? 'Wiedervorlage gesetzt — das Ticket ist bis dahin aus dem Posteingang ausgeblendet.' : 'Wiedervorlage aufgehoben.' }) %></div><% } %>
+    <% if (propertiesSaved) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: 'Änderungen gespeichert.' }) %></div><% } %>
+    <% if (created) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: mailEnabled ? 'Ticket angelegt — der Kunde wurde per E-Mail benachrichtigt.' : 'Ticket angelegt.' }) %></div><% } %>
+    <% if (typeof merged !== 'undefined' && merged) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: `Ticket #${merged} wurde in dieses Ticket zusammengeführt.` }) %></div><% } %>
+    <% if (typeof split !== 'undefined' && split) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: `Ticket #${split} wurde aufgeteilt — dies ist das neue Ticket.` }) %></div><% } %>
+
+    <div class="ticket-layout">
+      <div class="ticket-layout__main">
+        <section class="thread" aria-label="Verlauf"
+                 data-live-thread
+                 data-updates-url="/admin/tickets/<%= ticket.number %>/updates"
+                 data-updated-at="<%= ticket.updatedAt %>"
+                 data-status="<%= ticket.status %>">
+          <%- include('../partials/ticket-thread', { messages, ticket, viewer: 'admin' }) %>
+        </section>
+
+        <% if (ticket.mergedIntoId) { %>
+          <div class="card card--muted">
+            <div class="card__body row">
+              <%- include('../partials/icon', { name: 'merge', size: 16 }) %>
+              <span><% if (mergedInto) { %>Dieses Ticket wurde in <a href="/admin/tickets/<%= mergedInto.number %>">#<%= mergedInto.number %></a> zusammengeführt.<% } else { %>Dieses Ticket wurde zusammengeführt; das Ziel-Ticket gibt es nicht mehr.<% } %> Es nimmt keine Nachrichten mehr an.</span>
+            </div>
+          </div>
+        <% } else { %>
+        <form class="composer card" id="reply" action="/admin/tickets/<%= ticket.number %>/reply" method="POST" enctype="multipart/form-data" data-composer data-async>
+          <div class="composer__tabs" role="radiogroup" aria-label="Art der Nachricht">
+            <label class="composer__tab">
+              <input type="radio" name="mode" value="reply" checked>
+              <span><%- include('../partials/icon', { name: 'send', size: 14 }) %> Antwort an Kunden</span>
+            </label>
+            <label class="composer__tab composer__tab--note">
+              <input type="radio" name="mode" value="note">
+              <span><%- include('../partials/icon', { name: 'lock', size: 14 }) %> Interne Notiz</span>
+            </label>
+            <% if (canned.length || kbArticles.length) { %><div class="composer__tools"><% } %>
+            <% if (canned.length) { %>
+              <select class="input input--sm composer__canned" data-canned aria-label="Textbaustein einfügen" hidden>
+                <option value="">Textbaustein einfügen …</option>
+                <% canned.forEach(item => { %>
+                  <option value="<%= item.id %>" data-body="<%= item.body %>"><%= item.title %></option>
+                <% }); %>
+              </select>
+            <% } %>
+            <% if (kbArticles.length) { %>
+              <select class="input input--sm composer__canned" data-canned aria-label="Link auf Hilfeartikel einfügen" hidden>
+                <option value="">Hilfeartikel verlinken …</option>
+                <% kbArticles.forEach(article => { %>
+                  <option value="<%= article.id %>" data-body="<%= article.title %>: <%= publicUrl %>/support/articles/<%= article.slug %>"><%= article.title %></option>
+                <% }); %>
+              </select>
+            <% } %>
+            <% if (canned.length || kbArticles.length) { %></div><% } %>
+          </div>
+          <div class="card__body stack stack--sm">
+            <% if (replyError) { %><%- include('../partials/alert', { variant: 'danger', text: replyError }) %><% } %>
+            <div data-composer-error hidden></div>
+            <p class="composer__note-hint hint"><%- include('../partials/icon', { name: 'eyeOff', size: 13 }) %> Nur für den Support sichtbar — der Kunde bekommt davon nichts mit.</p>
+            <% if (!mailEnabled) { %>
+              <p class="composer__reply-hint hint"><%- include('../partials/icon', { name: 'info', size: 13 }) %> Mailversand ist deaktiviert — der Kunde sieht die Antwort nur im Portal.</p>
+            <% } %>
+            <label class="visually-hidden" for="message">Nachricht</label>
+            <%# Der Zeilenumbruch direkt nach <textarea> ist Absicht: HTML verschluckt
+                genau einen fuehrenden Umbruch, ein Entwurf ohne Anrede (beginnt
+                mit Leerzeilen) bleibt so unveraendert. %>
+            <textarea class="input textarea" id="message" name="message" rows="<%= replyDraft.value ? 10 : 7 %>" maxlength="10000"
+                      placeholder="Antwort schreiben …" data-note-placeholder="Interne Notiz für das Team …"
+                      data-reply-template="<%= replyDraft.value %>" data-reply-caret="<%= replyDraft.caret %>">
+<%= draft %></textarea>
+            <% if (replyDraft.value) { %>
+              <p class="composer__reply-hint hint">
+                <%- include('../partials/icon', { name: 'info', size: 13 }) %>
+                Anrede und Grußformel sind vorausgefüllt und frei bearbeitbar. <a href="/admin/ticket-settings#reply-template">Vorlage ändern</a>
+              </p>
+            <% } %>
+            <%- include('../partials/attachment-input', { maxFiles, maxMb }) %>
+          </div>
+          <div class="card__footer">
+            <label class="composer__status">
+              <span class="hint">Status danach</span>
+              <select class="input input--sm" name="statusAfter">
+                <option value="">Automatisch</option>
+                <option value="pending">Wartet auf Kunde</option>
+                <option value="open">Offen</option>
+                <option value="resolved">Gelöst</option>
+                <option value="closed" data-confirm="Geschlossene Tickets kann der Kunde nicht mehr beantworten — er müsste ein neues eröffnen." data-confirm-title="Antworten und schließen?" data-confirm-ok="Senden und schließen">Geschlossen</option>
+              </select>
+            </label>
+            <span class="hint composer__kbd"><kbd>Strg</kbd> + <kbd>Enter</kbd></span>
+            <button type="submit" class="btn btn--primary">
+              <%- include('../partials/icon', { name: 'send', size: 15 }) %>
+              <span class="composer__submit-reply">Antwort senden</span>
+              <span class="composer__submit-note">Notiz speichern</span>
+            </button>
+          </div>
+        </form>
+        <% } %>
+      </div>
+
+      <aside class="ticket-layout__aside">
+        <section class="card">
+          <div class="card__header"><h2 class="card__title">Eigenschaften</h2></div>
+          <form class="card__body stack stack--sm" action="/admin/tickets/<%= ticket.number %>/properties" method="POST" data-live-region="ticket-properties">
+            <div class="field">
+              <label class="label" for="prop-status">Status</label>
+              <select class="input input--sm" id="prop-status" name="status" data-live-status-select>
+                <% Object.entries(statusLabels).forEach(([key, label]) => { %>
+                  <option value="<%= key %>" <%= ticket.status === key ? 'selected' : '' %><% if (key === 'closed') { %> data-confirm="Geschlossene Tickets kann der Kunde nicht mehr beantworten — er müsste ein neues eröffnen." data-confirm-title="Ticket schließen?" data-confirm-ok="Schließen"<% } %>><%= label %></option>
+                <% }); %>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="prop-priority">Priorität</label>
+              <select class="input input--sm" id="prop-priority" name="priority">
+                <% Object.entries(priorityLabels).forEach(([key, label]) => { %>
+                  <option value="<%= key %>" <%= ticket.priority === key ? 'selected' : '' %>><%= label %></option>
+                <% }); %>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="prop-category">Kategorie</label>
+              <select class="input input--sm" id="prop-category" name="categoryId">
+                <option value="">— keine —</option>
+                <% categories.forEach(category => { %>
+                  <option value="<%= category.id %>" <%= ticket.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+                <% }); %>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="prop-tags">Tags</label>
+              <input class="input input--sm" id="prop-tags" name="tags" value="<%= ticket.tags.join(', ') %>" placeholder="z. B. download, uefi">
+              <span class="hint">Kommagetrennt, nur intern sichtbar.</span>
+            </div>
+            <div class="field">
+              <label class="label" for="prop-iso">ISO-Datei</label>
+              <select class="input input--sm" id="prop-iso" name="isoFile">
+                <option value="">— keine —</option>
+                <% if (ticket.isoFile && !isoFiles.includes(ticket.isoFile)) { %>
+                  <option value="<%= ticket.isoFile %>" selected><%= ticket.isoFile %> (gelöscht)</option>
+                <% } %>
+                <% isoFiles.forEach(name => { %>
+                  <option value="<%= name %>" <%= ticket.isoFile === name ? 'selected' : '' %>><%= name %></option>
+                <% }); %>
+              </select>
+            </div>
+            <button type="submit" class="btn btn--secondary btn--sm">Speichern</button>
+          </form>
+        </section>
+
+        <%# Eigenes Formular statt Teil der Eigenschaften: die Wiedervorlage
+            hat eigene Schaltflaechen je Vorgabe und soll beim Speichern der
+            Eigenschaften nicht mitgeschickt werden. %>
+        <div class="live-slot" data-live-region="ticket-snooze">
+        <% if (['new', 'open', 'pending'].includes(ticket.status) && !ticket.mergedIntoId) { %>
+          <% const snoozed = ticket.snoozedUntil && ticket.snoozedUntil > Date.now(); %>
+          <section class="card" id="snooze">
+            <div class="card__header"><h2 class="card__title"><%- include('../partials/icon', { name: 'bell', size: 15 }) %> Wiedervorlage</h2></div>
+            <div class="card__body stack stack--sm">
+              <% if (snoozeError) { %><%- include('../partials/alert', { variant: 'danger', text: snoozeError }) %><% } %>
+              <% if (snoozed) { %>
+                <p>Zurückgestellt bis <strong><%= formatDateTime(ticket.snoozedUntil) %></strong>.</p>
+                <form action="/admin/tickets/<%= ticket.number %>/unsnooze" method="POST">
+                  <button type="submit" class="btn btn--ghost btn--sm"><%- include('../partials/icon', { name: 'x', size: 14 }) %> Aufheben</button>
+                </form>
+              <% } else { %>
+                <p class="hint">Blendet das Ticket bis zum gewählten Zeitpunkt aus dem Posteingang aus. Antwortet der Kunde vorher, ist es sofort wieder da. Die Antwortfrist läuft weiter.</p>
+              <% } %>
+              <form class="stack stack--sm" action="/admin/tickets/<%= ticket.number %>/snooze#snooze" method="POST">
+                <div class="snooze-presets">
+                  <% snoozePresets.forEach(preset => { %>
+                    <button type="submit" class="btn btn--secondary btn--sm snooze-presets__item" name="preset" value="<%= preset.key %>" title="<%= formatDateTime(preset.until) %>">
+                      <span><%= preset.label %></span>
+                      <span class="hint"><%= formatDateTime(preset.until) %></span>
+                    </button>
+                  <% }); %>
+                </div>
+                <div class="field">
+                  <label class="label" for="snooze-until">Eigener Zeitpunkt</label>
+                  <input class="input input--sm" type="datetime-local" id="snooze-until" name="until" value="<%= snoozeValues.until %>">
+                </div>
+                <div class="field">
+                  <label class="label" for="snooze-note">Notiz <span class="text-muted">(optional, intern)</span></label>
+                  <textarea class="input input--sm" id="snooze-note" name="note" rows="2" maxlength="2000" placeholder="z. B. Rückmeldung vom Hersteller abwarten"><%= snoozeValues.note %></textarea>
+                </div>
+                <button type="submit" class="btn btn--secondary btn--sm"><%- include('../partials/icon', { name: 'bell', size: 14 }) %> <%= snoozed ? 'Verschieben' : 'Wiedervorlage setzen' %></button>
+              </form>
+            </div>
+          </section>
+        <% } %>
+        </div>
+
+        <div class="live-slot" data-live-region="ticket-iso">
+        <% if (ticket.isoFile) { %>
+          <%- include('../partials/ticket-iso', { ticket, isoInfo, viewer: 'admin' }) %>
+        <% } %>
+        </div>
+
+        <section class="card" data-live-region="ticket-customer">
+          <div class="card__header"><h2 class="card__title">Kunde</h2></div>
+          <div class="card__body stack stack--sm">
+            <div class="person">
+              <span class="msg__avatar msg__avatar--customer" aria-hidden="true"><%= initials(ticket.requesterName || ticket.requesterEmail) %></span>
+              <span class="person__text">
+                <strong><%= ticket.requesterName || '—' %></strong>
+                <a class="mono hint" href="mailto:<%= ticket.requesterEmail %>"><%= ticket.requesterEmail %></a>
+              </span>
+            </div>
+            <% if (customer) { %>
+              <dl class="props props--compact">
+                <div><dt>Konto</dt><dd>
+                  <% if (customer.disabled) { %><span class="badge badge--danger">Gesperrt</span>
+                  <% } else if (customer.emailVerified) { %><span class="badge badge--ok">Bestätigt</span>
+                  <% } else { %><span class="badge badge--warning">Unbestätigt</span><% } %>
+                </dd></div>
+                <div><dt>Kunde seit</dt><dd><%= formatDate(customer.createdAt) %></dd></div>
+              </dl>
+              <% if (otherTickets.length) { %>
+                <div>
+                  <p class="label mb-2">Weitere Tickets</p>
+                  <ul class="mini-list">
+                    <% otherTickets.slice(0, 5).forEach(other => { %>
+                      <li><a href="/admin/tickets/<%= other.number %>"><span class="mono">#<%= other.number %></span> <%= other.subject %></a>
+                        <%- include('../partials/ticket-status-badge', { ticket: other, viewer: 'admin' }) %></li>
+                    <% }); %>
+                  </ul>
+                </div>
+              <% } %>
+              <div class="row">
+                <a class="btn btn--ghost btn--sm" href="/admin/customers/<%= customer.id %>"><%- include('../partials/icon', { name: 'user', size: 14 }) %> Kundenprofil</a>
+                <% if (customer.emailVerified && !customer.disabled) { %>
+                  <a class="btn btn--ghost btn--sm" href="/admin/tickets/new?customer=<%= customer.id %>"><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Neues Ticket</a>
+                <% } %>
+              </div>
+            <% } else { %>
+              <p class="hint">Kein Kundenkonto verknüpft (Ticket aus der Zeit vor den Kundenkonten). Es wird automatisch zugeordnet, sobald sich jemand mit dieser Adresse registriert.</p>
+            <% } %>
+          </div>
+        </section>
+
+        <section class="card" data-live-region="ticket-timeline">
+          <div class="card__header"><h2 class="card__title">Zeitachse</h2></div>
+          <dl class="props">
+            <div><dt>Erstellt</dt><dd><%= formatDateTime(ticket.createdAt) %></dd></div>
+            <% if (splitFrom) { %>
+              <div><dt>Aufgeteilt aus</dt><dd><a href="/admin/tickets/<%= splitFrom.number %>" title="<%= splitFrom.subject %>">#<%= splitFrom.number %></a></dd></div>
+            <% } %>
+            <% if (splitChildren.length) { %>
+              <div><dt>Aufgeteilt in</dt><dd><% splitChildren.forEach((child, i) => { %><%= i ? ', ' : '' %><a href="/admin/tickets/<%= child.number %>" title="<%= child.subject %>">#<%= child.number %></a><% }); %></dd></div>
+            <% } %>
+            <div><dt>Erste Antwort</dt><dd><%= ticket.source === 'admin' ? 'vom Support eröffnet' : ticket.firstResponseAt ? formatDuration(ticket.firstResponseAt - ticket.createdAt) + ' danach' : 'noch keine' %></dd></div>
+            <div><dt>Letzte Kundenaktivität</dt><dd><%= ticket.lastCustomerActivityAt ? relativeTime(ticket.lastCustomerActivityAt) : '—' %></dd></div>
+            <% if (ticket.resolvedAt) { %><div><dt>Gelöst</dt><dd><%= formatDateTime(ticket.resolvedAt) %></dd></div><% } %>
+            <% if (ticket.closedAt) { %><div><dt>Geschlossen</dt><dd><%= formatDateTime(ticket.closedAt) %></dd></div><% } %>
+            <% if (ticket.reminderSentAt) { %><div><dt>Erinnerung</dt><dd><%= relativeTime(ticket.reminderSentAt) %></dd></div><% } %>
+            <% if (ticket.rating) { %>
+              <div><dt>Bewertung</dt><dd><span class="rating-inline"><%= '★'.repeat(ticket.rating) %><%= '☆'.repeat(5 - ticket.rating) %></span></dd></div>
+            <% } %>
+          </dl>
+          <% if (ticket.ratingComment) { %><p class="props__note hint">„<%= ticket.ratingComment %>“</p><% } %>
+        </section>
+
+        <% if (mergeTargets.length) { %>
+          <details class="card" id="merge" <%= mergeError ? 'open' : '' %>>
+            <summary class="card__header"><span class="card__title"><%- include('../partials/icon', { name: 'merge', size: 15 }) %> Zusammenführen</span></summary>
+            <form class="card__body stack stack--sm" action="/admin/tickets/<%= ticket.number %>/merge#merge" method="POST"
+              data-confirm="Alle Nachrichten und Anhänge von #<%= ticket.number %> wandern nach {target}, dieses Ticket wird geschlossen. Der Kunde wird benachrichtigt."
+              data-confirm-title="#<%= ticket.number %> zusammenführen?" data-confirm-ok="Zusammenführen">
+              <% if (mergeError) { %><%- include('../partials/alert', { variant: 'danger', text: mergeError }) %><% } %>
+              <p class="hint">Verschiebt alle Nachrichten und Anhänge dieses Tickets in ein anderes Ticket desselben Kunden und schließt dieses. Der Kunde wird benachrichtigt.</p>
+              <label class="label" for="merge-target">Zusammenführen in</label>
+              <select class="input input--sm" id="merge-target" name="target" required>
+                <% mergeTargets.forEach(other => { %>
+                  <option value="<%= other.number %>">#<%= other.number %> — <%= other.subject %></option>
+                <% }); %>
+              </select>
+              <label class="check" data-confirm-inline>
+                <input type="checkbox" name="confirm" value="1" required>
+                <span>Ja, #<%= ticket.number %> ist ein Duplikat</span>
+              </label>
+              <button type="submit" class="btn btn--secondary btn--sm"><%- include('../partials/icon', { name: 'merge', size: 14 }) %> Zusammenführen</button>
+            </form>
+          </details>
+        <% } %>
+
+        <% if (canSplit) { %>
+          <details class="card" id="split" <%= splitError ? 'open' : '' %>>
+            <summary class="card__header"><span class="card__title"><%- include('../partials/icon', { name: 'split', size: 15 }) %> Aufteilen</span></summary>
+            <form class="card__body stack stack--sm" action="/admin/tickets/<%= ticket.number %>/split#split" method="POST"
+              data-confirm="Die ausgewählten Nachrichten wandern samt Anhängen in ein neues Ticket „{subject}“. Der Kunde wird benachrichtigt."
+              data-confirm-title="Ticket aufteilen?" data-confirm-ok="Aufteilen" data-confirm-variant="primary">
+              <% if (splitError) { %><%- include('../partials/alert', { variant: 'danger', text: splitError }) %><% } %>
+              <p class="hint">Verschiebt die ausgewählten Nachrichten samt Anhängen in ein neues Ticket desselben Kunden. Beide Verläufe verweisen aufeinander, der Kunde wird benachrichtigt.</p>
+              <fieldset class="split-list">
+                <legend class="label">Nachrichten</legend>
+                <% splitCandidates.forEach(candidate => { %>
+                  <label class="check split-list__item">
+                    <input type="checkbox" name="messageIds" value="<%= candidate.id %>" <%= splitValues.messageIds.includes(candidate.id) ? 'checked' : '' %>>
+                    <span>
+                      <span>
+                        <strong><%= candidate.author === 'admin' ? 'Support' : (ticket.requesterName || 'Kunde') %></strong>
+                        <% if (candidate.kind === 'note') { %><%- include('../partials/icon', { name: 'lock', size: 11 }) %> Notiz<% } %>
+                      </span>
+                      <span class="hint"><%= formatDateTime(candidate.createdAt) %><% if (candidate.attachmentCount) { %> · <%= candidate.attachmentCount %> <%= candidate.attachmentCount === 1 ? 'Anhang' : 'Anhänge' %><% } %></span>
+                      <span class="split-list__excerpt"><%= candidate.excerpt || '(ohne Text)' %></span>
+                    </span>
+                  </label>
+                <% }); %>
+              </fieldset>
+              <div class="field">
+                <label class="label" for="split-subject">Betreff des neuen Tickets</label>
+                <input class="input input--sm" id="split-subject" name="subject" maxlength="200" required value="<%= splitValues.subject %>">
+              </div>
+              <div class="field">
+                <label class="label" for="split-priority">Priorität</label>
+                <select class="input input--sm" id="split-priority" name="priority">
+                  <% Object.entries(priorityLabels).forEach(([key, label]) => { %>
+                    <option value="<%= key %>" <%= splitValues.priority === key ? 'selected' : '' %>><%= label %></option>
+                  <% }); %>
+                </select>
+              </div>
+              <div class="field">
+                <label class="label" for="split-category">Kategorie</label>
+                <select class="input input--sm" id="split-category" name="categoryId">
+                  <option value="">— keine —</option>
+                  <% categories.forEach(category => { %>
+                    <option value="<%= category.id %>" <%= splitValues.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+                  <% }); %>
+                </select>
+              </div>
+              <label class="check" data-confirm-inline>
+                <input type="checkbox" name="confirm" value="1" required>
+                <span>Ja, die Auswahl ist ein eigenes Anliegen</span>
+              </label>
+              <button type="submit" class="btn btn--secondary btn--sm"><%- include('../partials/icon', { name: 'split', size: 14 }) %> Aufteilen</button>
+            </form>
+          </details>
+        <% } %>
+
+        <details class="card danger-zone" id="delete" <%= deleteError ? 'open' : '' %>>
+          <summary class="card__header"><span class="card__title">Ticket löschen</span></summary>
+          <form class="card__body stack stack--sm" action="/admin/tickets/<%= ticket.number %>/delete#delete" method="POST"
+            data-confirm="Das Ticket wird mit allen Nachrichten und Anhängen endgültig gelöscht. Das lässt sich nicht zurücknehmen."
+            data-confirm-title="Ticket #<%= ticket.number %> löschen?" data-confirm-ok="Endgültig löschen"
+            data-confirm-type="<%= ticket.number %>" data-confirm-type-label="Zur Bestätigung die Ticketnummer <%= ticket.number %> eingeben">
+            <% if (deleteError) { %><%- include('../partials/alert', { variant: 'danger', text: deleteError }) %><% } %>
+            <p class="hint">Löscht das Ticket mit allen Nachrichten und Anhängen endgültig.</p>
+            <div class="field" data-confirm-inline>
+              <label class="label" for="delete-confirm">Zur Bestätigung <span class="mono"><%= ticket.number %></span> eingeben</label>
+              <input class="input input--sm" id="delete-confirm" name="confirm" autocomplete="off" required>
+            </div>
+            <button type="submit" class="btn btn--danger btn--sm"><%- include('../partials/icon', { name: 'trash', size: 14 }) %> Endgültig löschen</button>
+          </form>
+        </details>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/attachments.js') %>" defer></script>
+<script src="<%= asset('/js/composer.js') %>" defer></script>
+<script src="<%= asset('/js/ticket-live.js') %>" defer></script>
+</body>
+</html>

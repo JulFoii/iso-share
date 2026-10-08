@@ -1,13 +1,36 @@
+# Abhaengigkeiten werden im Image per `npm ci` frisch installiert
 node_modules
 npm-debug.log
+*.log
+
+# Laufzeitdaten — duerfen NIE ins Image: data/ enthaelt die SQLite-DB mit
+# Passwort-Hash, Session-Secret, TOTP-Secret, Kundendaten und Backups;
+# uploads/ die ISO-Dateien. Beides kommt zur Laufzeit als Volume.
+data
+uploads
+tmp-uploads
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets und lokale Konfiguration
+.env
+.env.*
+
+# Entwicklung, Tests, Doku, VCS
 .git
 .gitignore
-README.md
-.env
-.nyc_output
-coverage
+.github
 .idea
-*.log
+.vscode
+test
+coverage
+.nyc_output
+*.md
+Caddyfile
+docker-compose*.yml
+Dockerfile
+.dockerignore
 .DS_Store
 Thumbs.db
-tmp-uploads
+*.zip

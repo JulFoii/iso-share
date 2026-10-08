@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Neues Passwort' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<%- include('../partials/navbar', { page: 'support' }) %>
+
+<main class="auth" id="main">
+  <div class="auth__card">
+    <div class="auth__head">
+      <span class="auth__logo"><%- include('../partials/icon', { name: 'lock', size: 18 }) %></span>
+      <h1 class="auth__title">Neues Passwort festlegen</h1>
+      <p class="auth__subtitle">Danach wirst du auf allen Geräten abgemeldet.</p>
+    </div>
+
+    <div class="card">
+      <div class="card__body stack stack--sm">
+        <% if (error) { %>
+          <%- include('../partials/alert', { variant: 'danger', text: error }) %>
+        <% } %>
+        <form class="stack stack--sm" action="/account/reset" method="POST">
+          <input type="hidden" name="token" value="<%= token %>">
+          <div class="field">
+            <label class="label" for="password">Neues Passwort</label>
+            <input class="input" type="password" id="password" name="password" minlength="10" maxlength="200" autocomplete="new-password" required autofocus>
+            <span class="hint">Mindestens 10 Zeichen.</span>
+          </div>
+          <div class="field">
+            <label class="label" for="passwordConfirm">Passwort wiederholen</label>
+            <input class="input" type="password" id="passwordConfirm" name="passwordConfirm" minlength="10" maxlength="200" autocomplete="new-password" required>
+          </div>
+          <button type="submit" class="btn btn--primary btn--block">Passwort speichern</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

@@ -24,12 +24,15 @@ const { createApiTokenStore } = require('../lib/api-token-store');
 const { createSessionSecretStore } = require('../lib/session-secret-store');
 const { createPasswordStore } = require('../lib/password-store');
 const { createUsernameStore } = require('../lib/username-store');
-const { safeCredentialId, safePasskeyLabel, safeUsername, safeTag, safeBackupName } = require('../lib/safe-name');
+const {
+    safeCredentialId, safePasskeyLabel, safeUsername, safeTag, safeBackupName,
+} = require('../lib/safe-name');
 const {
     generateSecret, base32Encode, base32Decode, totpAt, verifyTotp, buildOtpauthUri,
 } = require('../lib/totp');
 const { createTotpStore } = require('../lib/totp-store');
 const { createAuditLog } = require('../lib/audit-log');
+const { createEventStore } = require('../lib/event-store');
 const { createBackupStore } = require('../lib/backup-store');
 const { writeZip, fitsInClassicZip, crc32Update } = require('../lib/zip-stream');
 const { makeIso } = require('./helpers/make-iso');
@@ -43,6 +46,11 @@ async function tempDir() {
    braucht es stattdessen eine echte Datei, siehe restartDb() unten. */
 function memoryDb() {
     return openDatabase(':memory:');
+}
+
+/* Audit-Log ueber einen Event-Store im Speicher (siehe lib/audit-log.js) */
+function memoryAuditLog() {
+    return createAuditLog({ events: createEventStore({ file: ':memory:' }) });
 }
 
 async function restartDb() {
@@ -1163,7 +1171,7 @@ test('totp-store: disable() entfernt den Datensatz vollstaendig', async () => {
 /* ============================================================= audit-log */
 
 test('audit-log: log()/read() liefern die juengsten Eintraege zuerst', async () => {
-    const auditLog = createAuditLog({ db: memoryDb() });
+    const auditLog = memoryAuditLog();
 
     await auditLog.log('login_success', { ip: '127.0.0.1' });
     await auditLog.log('upload', { filename: 'a.iso' });
@@ -1177,7 +1185,7 @@ test('audit-log: log()/read() liefern die juengsten Eintraege zuerst', async () 
 });
 
 test('audit-log: read() liefert die id mit, aufsteigend vergeben (fuer den Heartbeat)', async () => {
-    const auditLog = createAuditLog({ db: memoryDb() });
+    const auditLog = memoryAuditLog();
 
     await auditLog.log('login_success', { ip: '127.0.0.1' });
     await auditLog.log('upload', { filename: 'a.iso' });
@@ -1188,27 +1196,31 @@ test('audit-log: read() liefert die id mit, aufsteigend vergeben (fuer den Heart
 });
 
 test('audit-log: read() ohne Eintraege liefert eine leere Liste', async () => {
-    const auditLog = createAuditLog({ db: memoryDb() });
+    const auditLog = memoryAuditLog();
     assert.deepEqual(await auditLog.read(), []);
 });
 
 test('audit-log: read({limit: Infinity}) liefert alle Eintraege', async () => {
-    const auditLog = createAuditLog({ db: memoryDb() });
+    const auditLog = memoryAuditLog();
     for (let i = 0; i < 5; i++) await auditLog.log('ereignis', { i });
     assert.equal((await auditLog.read({ limit: Infinity })).length, 5);
 });
 
-test('audit-log: kuerzt auf die juengsten Zeilen, sobald das Zeilenlimit ueberschritten wird', async () => {
-    const auditLog = createAuditLog({ db: memoryDb(), maxRows: 50, keepRowsOnTrim: 30 });
+test('audit-log: ip wandert in die eigene Spalte, read() liefert sie im alten Format zurueck', async () => {
+    const events = createEventStore({ file: ':memory:' });
+    const auditLog = createAuditLog({ events });
+    await auditLog.log('login_failed', { ip: '203.0.113.9', username: 'admin' });
 
-    for (let i = 0; i < 50; i++) await auditLog.log('filler', { i });
-    assert.equal((await auditLog.read({ limit: Infinity })).length, 50, 'am Limit wird noch nicht gekuerzt');
-
-    await auditLog.log('neuestes_ereignis', {});
-
-    const entries = await auditLog.read({ limit: Infinity });
-    assert.equal(entries.length, 30, 'muss nach dem Schreiben auf keepRowsOnTrim gekuerzt worden sein');
-    assert.equal(entries[0].event, 'neuestes_ereignis', 'juengster Eintrag darf beim Kuerzen nie verloren gehen');
+    const [entry] = await auditLog.read();
+    assert.equal(entry.ip, '203.0.113.9');
+    assert.equal(entry.username, 'admin');
+    const [event] = events.list({}).events;
+    assert.equal(event.ip, '203.0.113.9');
+    assert.equal(event.module, 'auth');
+    assert.equal(event.severityLabel, 'WARNING');
+    assert.equal(event.outcome, 'failure');
+    assert.equal(event.audit, true);
+    assert.equal(event.payload.ip, undefined);
 });
 
 /* ============================================================ safeBackupName */

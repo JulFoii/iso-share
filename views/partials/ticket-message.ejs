@@ -1,0 +1,72 @@
+<%
+/*
+ * Eine Nachricht im Ticket-Verlauf — geteilt zwischen Kunden- und
+ * Admin-Sicht (viewer: 'customer' | 'admin'). Eigene Nachrichten stehen
+ * rechts, die der Gegenseite links, System-Ereignisse zentriert als
+ * schmale Zeile, interne Notizen (nur Admin) farblich abgesetzt.
+ *
+ * Der Text laeuft durch formatMessage() (lib/routes/helpers.js): komplett
+ * escaped, danach nur http(s)-Links verlinkt — darum hier die unescapte
+ * Ausgabe-Variante des Tags.
+ */
+const isAdminView = viewer === 'admin';
+const mine = (isAdminView && message.author === 'admin') || (!isAdminView && message.author === 'customer');
+const authorName = message.author === 'admin'
+  ? 'Support'
+  : message.author === 'system'
+    ? 'System'
+    : (isAdminView ? (ticket.requesterName || ticket.requesterEmail) : 'Du');
+const avatarText = message.author === 'admin' ? 'S' : initials(ticket.requesterName || ticket.requesterEmail);
+const iso = new Date(message.createdAt).toISOString();
+%>
+<% if (message.kind === 'event') { %>
+  <div class="msg-event<%= message.internal ? ' msg-event--internal' : '' %>" id="message-<%= message.id %>">
+    <%- include('icon', { name: message.internal ? 'eyeOff' : 'info', size: 13 }) %>
+    <span><%= isAdminView ? message.body : customerEventText(message.body) %></span>
+    <time datetime="<%= iso %>" title="<%= formatDateTime(message.createdAt) %>"><%= relativeTime(message.createdAt) %></time>
+  </div>
+<% } else { %>
+  <article class="msg<%= mine ? ' msg--mine' : '' %><%= message.kind === 'note' ? ' msg--note' : '' %>" id="message-<%= message.id %>">
+    <div class="msg__avatar msg__avatar--<%= message.author %>" aria-hidden="true"><%= avatarText %></div>
+    <div class="msg__bubble">
+      <header class="msg__meta">
+        <strong class="msg__author"><%= authorName %></strong>
+        <% if (message.kind === 'note') { %>
+          <span class="msg__tag msg__tag--note"><%- include('icon', { name: 'lock', size: 11 }) %> Interne Notiz</span>
+        <% } %>
+        <% if (message.via === 'email') { %>
+          <span class="msg__tag" title="Per E-Mail eingegangen"><%- include('icon', { name: 'mail', size: 11 }) %> E-Mail</span>
+        <% } %>
+        <time datetime="<%= iso %>" title="<%= formatDateTime(message.createdAt) %>"><%= relativeTime(message.createdAt) %></time>
+      </header>
+      <div class="msg__body"><%- formatMessage(message.body) %></div>
+      <% const images = message.attachments.filter(file => file.isImage); %>
+      <% const files = message.attachments.filter(file => !file.isImage); %>
+      <% if (images.length) { %>
+        <ul class="msg__images">
+          <% images.forEach(file => { %>
+            <li>
+              <a class="file-thumb" href="/attachments/<%= file.id %>" target="_blank" rel="noopener" title="<%= file.filename %> öffnen">
+                <img src="/attachments/<%= file.id %>" alt="" loading="lazy">
+                <span class="file-thumb__name"><%= file.filename %></span>
+              </a>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+      <% if (files.length) { %>
+        <ul class="msg__files">
+          <% files.forEach(file => { %>
+            <li>
+              <a class="file-chip" href="/attachments/<%= file.id %>?download=1" download>
+                <%- include('icon', { name: 'file', size: 14 }) %>
+                <span class="file-chip__name"><%= file.filename %></span>
+                <span class="file-chip__size"><%= formatSize(file.size) %></span>
+              </a>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+    </div>
+  </article>
+<% } %>

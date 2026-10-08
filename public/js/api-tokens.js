@@ -32,12 +32,13 @@
       });
   }
 
+  // Zeitzone wie serverseitig (lib/time.js), nicht die des Browsers
+  var zoneMeta = document.querySelector('meta[name="app-time-zone"]');
+
   function formatDate(ts) {
-    return new Date(ts).toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+    var options = { day: "2-digit", month: "short", year: "numeric" };
+    if (zoneMeta && zoneMeta.content) options.timeZone = zoneMeta.content;
+    return new Date(ts).toLocaleDateString("de-DE", options);
   }
 
   function addRow(token) {

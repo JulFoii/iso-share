@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Event-Log', stylesheets: ['/css/events.css'] }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-logs', loggedIn: true }) %>
+
+<%
+  const fmtNum = n => new Intl.NumberFormat('de-DE').format(n);
+  const fmtTime = ts => formatStamp(ts);
+  const currentZone = zoneName(Date.now());
+  const rangeLabel = filters.range === 'custom'
+    ? `${filters.from ? formatStamp(filters.from).slice(0, 16) : 'Anfang'} – ${filters.to ? formatStamp(filters.to).slice(0, 16) : 'jetzt'}`
+    : (ranges.find(r => r[0] === filters.range) || ranges[1])[1];
+  const errorTrend = trend(stats.errorRate, stats.previous.errorRate);
+  const totalTrend = trend(stats.total, stats.previous.total);
+  const bySev = stats.bySeverity;
+  const actorLabel = { admin: 'Admin', customer: 'Kunde', token: 'API-Token', system: 'System', anonymous: 'anonym' };
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header page-header--split">
+      <div>
+        <h1 class="page-header__title">Event-Log</h1>
+        <p class="page-header__meta">
+          <span>Zeitraum: <strong class="text-strong"><%= rangeLabel %></strong></span>
+          <span title="Anzeige-Zeitzone (APP_TIMEZONE); gespeichert wird UTC">Zeiten in <%= timeZone %> (<%= currentZone %>)</span>
+        </p>
+      </div>
+      <div class="row">
+        <a class="btn btn--secondary btn--sm" href="/admin/logs/export.csv<%= filterQuery({ before: null }) %>" download>
+          <%- include('../partials/icon', { name: 'download', size: 14 }) %> CSV
+        </a>
+        <a class="btn btn--secondary btn--sm" href="/admin/logs/export.json<%= filterQuery({ before: null }) %>" download>
+          <%- include('../partials/icon', { name: 'download', size: 14 }) %> JSON
+        </a>
+        <a class="btn btn--ghost btn--sm" href="/admin/logs/settings">
+          <%- include('../partials/icon', { name: 'settings', size: 14 }) %> Archivregeln
+        </a>
+      </div>
+    </header>
+
+    <%# ------------------------------------------------ Kennzahlen %>
+    <div data-live-region="event-kpis">
+      <div class="kpis">
+        <div class="kpi">
+          <span class="kpi__label">Events</span>
+          <span class="kpi__value"><%= fmtNum(stats.total) %></span>
+          <span class="kpi__trend">Vorperiode <%= totalTrend.text %></span>
+        </div>
+        <a class="kpi <%= stats.errors > 0 ? 'kpi--alert' : '' %>" href="/admin/logs<%= filterQuery({ severities: [40, 50], before: null }) %>">
+          <span class="kpi__label">Fehlerquote</span>
+          <span class="kpi__value"><%= percent(stats.errorRate) %></span>
+          <span class="kpi__trend <%= errorTrend.dir === 'up' ? 'kpi__trend--up-bad' : errorTrend.dir === 'down' ? 'kpi__trend--down-good' : '' %>"><%= fmtNum(stats.errors) %> Fehler · <%= errorTrend.text %></span>
+        </a>
+        <a class="kpi" href="/admin/logs<%= filterQuery({ event: 'http_request', severities: [40], modules: [], before: null }) %>">
+          <span class="kpi__label">HTTP-5xx-Quote</span>
+          <span class="kpi__value"><%= percent(stats.httpErrorRate) %></span>
+          <span class="kpi__trend"><%= fmtNum(stats.http) %> Requests · <%= fmtNum(stats.http4xx) %>× 4xx</span>
+        </a>
+        <a class="kpi <%= stats.failedLogins > 0 ? 'kpi--alert' : '' %>" href="/admin/logs<%= filterQuery({ modules: ['auth'], severities: [30], before: null }) %>">
+          <span class="kpi__label">Fehlgeschl. Logins</span>
+          <span class="kpi__value"><%= fmtNum(stats.failedLogins) %></span>
+          <span class="kpi__trend">Admin + Kunden</span>
+        </a>
+        <a class="kpi <%= stats.ipBlocks > 0 ? 'kpi--alert' : '' %>" href="/admin/logs<%= filterQuery({ event: 'ip_blocked', severities: [], modules: [], before: null }) %>">
+          <span class="kpi__label">IP-Sperren</span>
+          <span class="kpi__value"><%= fmtNum(stats.ipBlocks) %></span>
+          <span class="kpi__trend">Rate-Limit ausgelöst</span>
+        </a>
+        <a class="kpi <%= stats.critical > 0 ? 'kpi--alert' : '' %>" href="/admin/logs<%= filterQuery({ severities: [50], before: null }) %>">
+          <span class="kpi__label">Kritisch</span>
+          <span class="kpi__value"><%= fmtNum(stats.critical) %></span>
+          <span class="kpi__trend">CRITICAL-Events</span>
+        </a>
+      </div>
+    </div>
+
+    <%# ------------------------------------------------ Grafiken %>
+    <div class="charts" data-live-region="event-charts" data-live-guard-hover>
+      <section class="card" aria-labelledby="timeline-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="timeline-heading">Verlauf nach Schweregrad</h2>
+          <span class="hint">je <%= stats.bucketMs >= 86400000 ? `${stats.bucketMs / 86400000} ${stats.bucketMs === 86400000 ? 'Tag' : 'Tage'}` : stats.bucketMs >= 3600000 ? `${stats.bucketMs / 3600000} Std.` : `${stats.bucketMs / 60000} Min.` %></span>
+        </div>
+        <div class="card__body">
+          <div class="chart__scroll">
+            <svg class="chart__svg" viewBox="-34 -8 <%= timeline.width + 40 %> <%= timeline.height + 28 %>" role="img"
+                 aria-label="Events im Zeitverlauf, gestapelt nach Schweregrad. Maximum <%= timeline.max %> je Abschnitt; die Tabelle unten enthält die Einzelwerte.">
+              <% timeline.gridlines.forEach(line => { %>
+                <line class="chart__grid" x1="0" x2="<%= timeline.width %>" y1="<%= line.y %>" y2="<%= line.y %>"></line>
+                <text class="chart__tick" x="-6" y="<%= line.y + 3 %>" text-anchor="end"><%= fmtNum(line.value) %></text>
+              <% }); %>
+              <line class="chart__axis" x1="0" x2="<%= timeline.width %>" y1="<%= timeline.height %>" y2="<%= timeline.height %>"></line>
+              <text class="chart__tick" x="-6" y="<%= timeline.height + 3 %>" text-anchor="end">0</text>
+              <% timeline.bars.forEach(bar => { %>
+                <g class="chart__bar">
+                  <title><%= bar.tooltip %></title>
+                  <rect class="chart__hit" x="<%= bar.x - (bar.slot - bar.w) / 2 %>" y="0" width="<%= bar.slot %>" height="<%= timeline.height %>"></rect>
+                  <% bar.segments.forEach(seg => { %>
+                    <rect class="chart__seg chart__seg--<%= seg.key %>" x="<%= seg.x.toFixed(1) %>" y="<%= seg.y.toFixed(1) %>" width="<%= seg.w.toFixed(1) %>" height="<%= seg.h.toFixed(1) %>" rx="1.5"></rect>
+                  <% }); %>
+                  <% if (bar.label) { %>
+                    <text class="chart__tick" x="<%= (bar.x + bar.w / 2).toFixed(1) %>" y="<%= timeline.height + 16 %>" text-anchor="middle"><%= bar.label %></text>
+                  <% } %>
+                </g>
+              <% }); %>
+            </svg>
+          </div>
+          <div class="legend" aria-label="Legende">
+            <% severities.forEach(sev => { %>
+              <a class="legend__item" href="/admin/logs<%= filterQuery({ severities: [sev.value], before: null }) %>">
+                <span class="legend__swatch sev--<%= sev.key %>"></span>
+                <%= sev.label %> <span class="legend__count"><%= fmtNum(bySev[sev.value] || 0) %></span>
+              </a>
+            <% }); %>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="modules-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="modules-heading">Verteilung nach Modul</h2>
+        </div>
+        <div class="card__body">
+          <% if (stats.modules.length === 0) { %>
+            <p class="hint">Keine Events im Zeitraum.</p>
+          <% } else { %>
+            <ul class="dist">
+              <% stats.modules.forEach(entry => { %>
+                <li>
+                  <a class="dist__row" href="/admin/logs<%= filterQuery({ modules: [entry.module], before: null }) %>"
+                     <%- filters.modules.includes(entry.module) ? 'aria-current="true"' : '' %>
+                     title="<%= moduleLabels[entry.module] || entry.module %>: <%= fmtNum(entry.n) %> Events (<%= percent(entry.n / Math.max(1, stats.total)) %>)">
+                    <span class="dist__label"><%= moduleLabels[entry.module] || entry.module %></span>
+                    <svg class="dist__bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true">
+                      <rect class="dist__track" x="0" y="0" width="100" height="8"></rect>
+                      <rect class="dist__fill" x="0" y="0" width="<%= Math.max(1, (entry.n / moduleMax) * 100).toFixed(1) %>" height="8"></rect>
+                    </svg>
+                    <span class="dist__value"><%= fmtNum(entry.n) %></span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+    </div>
+
+    <%# ------------------------------------------------ Filter + Tabelle %>
+    <section class="card card--flush" aria-labelledby="events-heading">
+      <h2 class="visually-hidden" id="events-heading">Ereignisse</h2>
+      <form class="log-filters" action="/admin/logs" method="GET" role="search" data-event-filters>
+        <div class="log-filters__row">
+          <div class="search search--compact log-filters__search">
+            <%- include('../partials/icon', { name: 'search', size: 15, cls: 'search__icon' }) %>
+            <input class="input input--sm" type="search" name="q" value="<%= filters.q %>" placeholder="Volltext: Ereignis, Meldung, IP, Pfad, Payload …" aria-label="Events durchsuchen">
+          </div>
+          <select class="input input--sm" name="module" aria-label="Modul">
+            <option value="">Alle Module</option>
+            <% modules.forEach(module => { %>
+              <option value="<%= module.key %>" <%= filters.modules.length === 1 && filters.modules[0] === module.key ? 'selected' : '' %>><%= module.label %></option>
+            <% }); %>
+          </select>
+          <select class="input input--sm" name="range" aria-label="Zeitraum">
+            <% ranges.forEach(([key, label]) => { %>
+              <option value="<%= key %>" <%= filters.range === key ? 'selected' : '' %>><%= label %></option>
+            <% }); %>
+            <% if (filters.range === 'custom') { %><option value="custom" selected>Eigener Zeitraum</option><% } %>
+          </select>
+          <button class="btn btn--primary btn--sm" type="submit">Filtern</button>
+        </div>
+        <div class="log-filters__row">
+          <span class="hint">Schweregrad:</span>
+          <% severities.forEach(sev => { %>
+            <label class="chip-toggle">
+              <input type="checkbox" name="sev" value="<%= sev.key %>" <%= filters.severities.includes(sev.value) ? 'checked' : '' %>>
+              <span class="sev sev--<%= sev.key %>"><%= sev.label %></span>
+            </label>
+          <% }); %>
+          <label class="check check--compact">
+            <input type="checkbox" name="audit" value="1" <%= filters.audit ? 'checked' : '' %>>
+            Nur Audit-Einträge
+          </label>
+          <details class="log-filters__custom" <%= filters.range === 'custom' ? 'open' : '' %>>
+            <summary>Eigener Zeitraum (<%= timeZone %>)</summary>
+            <div class="log-filters__row">
+              <label class="hint" for="logFrom">Von</label>
+              <input class="input input--sm" type="datetime-local" id="logFrom" name="from" value="<%= filters.range === 'custom' ? toLocalInput(filters.from) : '' %>">
+              <label class="hint" for="logTo">Bis</label>
+              <input class="input input--sm" type="datetime-local" id="logTo" name="to" value="<%= filters.range === 'custom' ? toLocalInput(filters.to) : '' %>">
+            </div>
+          </details>
+        </div>
+        <% if (filters.modules.length > 1) { filters.modules.slice(1).forEach(module => { %>
+          <input type="hidden" name="module" value="<%= module %>">
+        <% }); } %>
+        <% if (filters.requestId) { %><input type="hidden" name="req" value="<%= filters.requestId %>"><% } %>
+        <% if (filters.ip) { %><input type="hidden" name="ip" value="<%= filters.ip %>"><% } %>
+        <% if (filters.event) { %><input type="hidden" name="event" value="<%= filters.event %>"><% } %>
+        <% if (filters.requestId || filters.ip || filters.event || hasFilters) { %>
+          <div class="active-filters">
+            <% if (filters.requestId) { %>
+              <span class="badge badge--mono">Request <%= filters.requestId %></span>
+              <a href="/admin/logs<%= filterQuery({ requestId: null, before: null }) %>">entfernen</a>
+            <% } %>
+            <% if (filters.ip) { %>
+              <span class="badge badge--mono">IP <%= filters.ip %></span>
+              <a href="/admin/logs<%= filterQuery({ ip: null, before: null }) %>">entfernen</a>
+            <% } %>
+            <% if (filters.event) { %>
+              <span class="badge badge--mono">Ereignis <%= filters.event %></span>
+              <a href="/admin/logs<%= filterQuery({ event: null, before: null }) %>">entfernen</a>
+            <% } %>
+            <% if (hasFilters) { %><a class="btn btn--ghost btn--sm" href="/admin/logs">Alle Filter zurücksetzen</a><% } %>
+          </div>
+        <% } %>
+      </form>
+
+      <div data-live-region="event-table" data-live-guard-hover>
+        <% if (page.events.length === 0) { %>
+          <div class="empty">
+            <div class="empty__icon"><%- include('../partials/icon', { name: 'search', size: 20 }) %></div>
+            <p class="empty__title">Keine Events gefunden</p>
+            <p class="empty__text">Für diese Filter gibt es im gewählten Zeitraum keine Einträge.</p>
+          </div>
+        <% } else { %>
+          <%# Festes Spaltenraster (table-layout: fixed): lange Werte werden
+              gekuerzt statt die Tabelle zu verbreitern — der volle Wert steht
+              im title und in der Detailansicht. Unter ~46rem Breite wird jede
+              Zeile zur Karte (Container-Query in events.css). %>
+          <div class="events-wrap">
+            <table class="table table--compact events-table">
+              <colgroup>
+                <col class="events-table__col-time">
+                <col class="events-table__col-sev">
+                <col class="events-table__col-module">
+                <col>
+                <col class="events-table__col-actor">
+                <col class="events-table__col-ip">
+                <col class="events-table__col-status">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">Zeit</th>
+                  <th scope="col">Stufe</th>
+                  <th scope="col">Modul</th>
+                  <th scope="col">Ereignis</th>
+                  <th scope="col">Akteur</th>
+                  <th scope="col">IP</th>
+                  <th scope="col" class="events-table__num">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% page.events.forEach(event => {
+                     const hasDuration = event.durationMs !== null && event.durationMs !== undefined;
+                     const duration = !hasDuration ? null
+                       : event.durationMs >= 1000 ? `${(event.durationMs / 1000).toFixed(1).replace('.', ',')} s`
+                       : `${event.durationMs < 10 ? event.durationMs.toFixed(1).replace('.', ',') : Math.round(event.durationMs)} ms`;
+                     const actor = actorLabel[event.actorType] || '—';
+                     const moduleName = moduleLabels[event.module] || event.module; %>
+                  <tr class="event-row event-row--<%= event.severityKey %>" data-event-id="<%= event.id %>" data-live-key="<%= event.id %>">
+                    <td class="event-row__cell-time">
+                      <a class="event-row__time" href="/admin/logs/<%= event.id %>" data-event-open title="<%= fmtTime(event.ts) %> <%= zoneName(event.ts) %> · <%= new Date(event.ts).toISOString() %> (UTC)">
+                        <span class="event-row__clock"><%= fmtTime(event.ts).slice(11) %></span>
+                        <span class="event-row__date"><%= fmtTime(event.ts).slice(0, 10) %></span>
+                      </a>
+                    </td>
+                    <td class="event-row__cell-sev"><span class="sev sev--<%= event.severityKey %>"><%= event.severityLabel %></span></td>
+                    <td class="event-row__cell-module"><span class="event-row__clip" title="<%= moduleName %>"><%= moduleName %></span></td>
+                    <td class="event-row__cell-event">
+                      <span class="event-row__headline">
+                        <span class="event-row__name" title="<%= event.event %>"><%= event.event %></span>
+                        <% if (event.audit) { %><span class="badge badge--mono event-row__audit" title="Audit-Eintrag">audit</span><% } %>
+                      </span>
+                      <% if (event.message) { %><span class="event-row__message" title="<%= event.message.slice(0, 300) %>"><%= event.message %></span><% } %>
+                    </td>
+                    <td class="event-row__cell-actor">
+                      <span class="event-row__clip"><%= actor %></span>
+                      <% if (event.actorId) { %><span class="event-row__clip event-row__sub mono" title="<%= event.actorId %>"><%= event.actorId %></span><% } %>
+                    </td>
+                    <td class="event-row__cell-ip"><span class="event-row__clip mono" title="<%= event.ip || '' %>"><%= event.ip || '—' %></span></td>
+                    <td class="event-row__cell-status events-table__num mono">
+                      <% if (event.status) { %><span class="status-code--<%= String(event.status)[0] %>"><%= event.status %></span><% } %>
+                      <% if (duration) { %><span class="event-row__sub"><%= duration %></span><% } %>
+                      <% if (!event.status && !duration) { %><span class="event-row__sub">—</span><% } %>
+                    </td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+        <div class="events-pager">
+          <span><%= page.events.length %> Einträge auf dieser Seite<% if (!settings.storeDebug) { %> · DEBUG-Events werden nicht gespeichert<% } %></span>
+          <span class="row">
+            <% if (filters.before) { %><a class="btn btn--ghost btn--sm" href="/admin/logs<%= filterQuery({ before: null }) %>">← Neueste</a><% } %>
+            <% if (page.nextCursor) { %><a class="btn btn--secondary btn--sm" href="/admin/logs<%= filterQuery({ before: page.nextCursor }) %>">Ältere →</a><% } %>
+          </span>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<dialog class="dialog dialog--wide" id="eventDialog" aria-labelledby="eventDialogTitle">
+  <div class="dialog__body">
+    <h2 class="visually-hidden" id="eventDialogTitle">Event-Details</h2>
+    <div data-event-dialog-body></div>
+  </div>
+  <div class="dialog__footer">
+    <a class="btn btn--ghost" href="#" data-event-dialog-link>Als eigene Seite öffnen</a>
+    <form method="dialog"><button type="submit" class="btn btn--secondary" autofocus>Schließen</button></form>
+  </div>
+</dialog>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/event-log.js') %>" defer></script>
+</body>
+</html>

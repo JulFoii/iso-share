@@ -82,6 +82,13 @@
           return res.json();
         })
         .then(function () {
+          // Gespeicherte Werte sind jetzt der Server-Stand — sonst hielte
+          // live-regions.js die Felder weiter fuer "in Bearbeitung" und
+          // wuerde Aenderungen aus einem anderen Tab nie uebernehmen.
+          settingsForm.querySelectorAll("input").forEach(function (input) {
+            input.defaultValue = input.value;
+            input.defaultChecked = input.checked;
+          });
           notify("Zeitplan gespeichert.", "success");
         })
         .catch(function (err) {

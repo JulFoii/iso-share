@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Meine Tickets' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'account-tickets' }) %>
+
+<%
+  // Bewusst nur zwei Reiter: was noch laeuft, und was erledigt ist. "Wartet
+  // auf dich" ist kein eigener Reiter, sondern steht als Status direkt am
+  // Ticket — und solche Tickets stehen in der Liste ganz oben.
+  const viewTabs = [['active', 'Offen'], ['done', 'Erledigt']];
+  const currentTab = view === 'done' ? 'done' : 'active';
+%>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <header class="page-header page-header--split">
+      <div data-live-region="tickets-head">
+        <h1 class="page-header__title">Meine Tickets</h1>
+        <% if (counts.waiting > 0) { %>
+          <p class="page-header__lead">
+            <%= counts.waiting === 1 ? 'Ein Ticket wartet' : `${counts.waiting} Tickets warten` %> auf deine Antwort.
+          </p>
+        <% } %>
+      </div>
+      <a class="btn btn--primary" href="/account/tickets/new"><%- include('../partials/icon', { name: 'plus', size: 16 }) %> Neues Ticket</a>
+    </header>
+
+    <div class="list-head">
+      <nav class="segmented" aria-label="Ansicht" data-live-region="tickets-views">
+        <% viewTabs.forEach(([key, label]) => { %>
+          <a class="segmented__item" href="/account/tickets?view=<%= key %>" <%- currentTab === key ? 'aria-current="page"' : '' %>>
+            <%= label %> <span class="segmented__count"><%= counts[key] %></span>
+          </a>
+        <% }); %>
+      </nav>
+      <% if (counts.all > 5 || q) { %>
+        <form class="search search--compact" action="/account/tickets" method="GET" role="search">
+          <input type="hidden" name="view" value="<%= currentTab %>">
+          <%- include('../partials/icon', { name: 'search', size: 15, cls: 'search__icon' }) %>
+          <input class="input input--sm" type="search" name="q" value="<%= q %>" placeholder="Suchen …" aria-label="Tickets durchsuchen">
+        </form>
+      <% } %>
+    </div>
+
+    <div class="card card--flush" data-live-region="tickets-list" data-live-guard-hover>
+      <% if (tickets.length === 0) { %>
+        <div class="empty">
+          <div class="empty__icon"><%- include('../partials/icon', { name: q ? 'search' : 'inbox', size: 20 }) %></div>
+          <p class="empty__title"><%= q ? 'Keine Treffer' : (currentTab === 'done' ? 'Noch nichts erledigt' : 'Keine offenen Tickets') %></p>
+          <p class="empty__text">
+            <%= q ? 'Versuche einen anderen Suchbegriff.' : 'Hast du eine Frage oder ein Problem? Lege einfach ein neues Ticket an.' %>
+          </p>
+        </div>
+      <% } else { %>
+        <ul class="ticket-list">
+          <% tickets.forEach(ticket => { %>
+            <li data-live-key="ticket-<%= ticket.number %>">
+              <a class="ticket-item<%= ticket.customerUnread ? ' is-unread' : '' %><%= ticket.status === 'pending' ? ' is-waiting' : '' %>" href="/account/tickets/<%= ticket.number %>">
+                <span class="ticket-item__dot" aria-hidden="true"></span>
+                <span class="ticket-item__main">
+                  <span class="ticket-item__subject"><%= ticket.subject %></span>
+                  <span class="ticket-item__meta">
+                    <span class="mono">#<%= ticket.number %></span>
+                    <% if (ticket.categoryName) { %><span><%= ticket.categoryName %></span><% } %>
+                    <% if (ticket.customerUnread) { %><span class="ticket-item__new">Neue Antwort</span><% } %>
+                  </span>
+                </span>
+                <span class="ticket-item__side">
+                  <%- include('../partials/ticket-status-badge', { ticket, viewer: 'customer' }) %>
+                  <time class="ticket-item__time" datetime="<%= new Date(ticket.updatedAt).toISOString() %>" title="<%= formatDateTime(ticket.updatedAt) %>"><%= relativeTime(ticket.updatedAt) %></time>
+                </span>
+              </a>
+            </li>
+          <% }); %>
+        </ul>
+      <% } %>
+    </div>
+
+    <div data-live-region="tickets-pages"><%- include('../partials/pagination', { page, pages, baseUrl: '/account/tickets', params: { view: currentTab, q } }) %></div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+</body>
+</html>

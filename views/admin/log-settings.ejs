@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Event-Log: Archivregeln', stylesheets: ['/css/events.css'] }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/admin/logs/settings">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-logs', loggedIn: true }) %>
+
+<%
+  const fmtNum = n => new Intl.NumberFormat('de-DE').format(n);
+  const checked = value => value === true || value === '1' || value === 'on';
+  const dayFields = [
+    ['debugDays', 'DEBUG'], ['infoDays', 'INFO'], ['warningDays', 'WARNING'], ['errorDays', 'ERROR'], ['criticalDays', 'CRITICAL'],
+  ];
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <a class="back-link" href="/admin/logs"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Zurück zum Event-Log</a>
+    <header class="page-header">
+      <h1 class="page-header__title">Archivierung &amp; Bereinigung</h1>
+      <p class="page-header__meta">
+        <span>Wird stündlich automatisch angewendet</span>
+      </p>
+    </header>
+
+    <% if (saved) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: 'Einstellungen gespeichert.' }) %></div><% } %>
+    <% if (purged !== null) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: `Bereinigung ausgeführt: ${fmtNum(purged)} ${purged === 1 ? 'Eintrag' : 'Einträge'} entfernt.` }) %></div><% } %>
+    <% if (error) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div><% } %>
+
+    <div class="settings-grid">
+      <section class="card settings-grid__wide" aria-labelledby="retention-heading">
+        <div class="card__header"><h2 class="card__title" id="retention-heading">Aufbewahrung</h2></div>
+        <form class="card__body stack" method="POST" action="/admin/logs/settings">
+          <p class="hint">Events werden nach Ablauf der Frist ihres Schweregrads gelöscht (0 = nie). Audit-Einträge (Anmeldungen, Rechte- und Datenänderungen) folgen ausschließlich ihrer eigenen Frist.</p>
+          <div class="retention-grid">
+            <% dayFields.forEach(([name, label]) => { %>
+              <div class="field">
+                <label class="label" for="<%= name %>"><%= label %> (Tage)</label>
+                <input class="input input--sm" type="number" id="<%= name %>" name="<%= name %>" min="0" max="3650" value="<%= settings[name] %>" required>
+              </div>
+            <% }); %>
+            <div class="field">
+              <label class="label" for="auditDays">Audit (Tage)</label>
+              <input class="input input--sm" type="number" id="auditDays" value="<%= settings.auditDays %>" disabled aria-describedby="auditDaysHint">
+            </div>
+          </div>
+          <p class="hint" id="auditDaysHint">Die Audit-Frist ist eine Betreiber-Entscheidung und wird über <span class="mono">AUDIT_LOG_RETENTION_DAYS</span> gesetzt. Die Datenschutzerklärung nennt automatisch die hier wirksamen Fristen.</p>
+
+          <div class="retention-grid">
+            <div class="field">
+              <label class="label" for="maxRows">Obergrenze (Einträge)</label>
+              <input class="input input--sm" type="number" id="maxRows" name="maxRows" min="10000" max="50000000" value="<%= settings.maxRows %>" required>
+            </div>
+            <div class="field">
+              <label class="label" for="slowQueryMs">Langsame Abfrage ab (ms)</label>
+              <input class="input input--sm" type="number" id="slowQueryMs" name="slowQueryMs" min="1" max="60000" value="<%= settings.slowQueryMs %>" required>
+            </div>
+            <div class="field">
+              <label class="label" for="archiveDays">Archive behalten (Tage)</label>
+              <input class="input input--sm" type="number" id="archiveDays" name="archiveDays" min="0" max="3650" value="<%= settings.archiveDays %>" required>
+            </div>
+          </div>
+
+          <label class="check">
+            <input type="checkbox" name="archiveEnabled" value="1" <%= checked(settings.archiveEnabled) ? 'checked' : '' %>>
+            <span>Vor dem Löschen archivieren — als gzip-komprimiertes NDJSON unter <span class="mono">DATA_DIR/log-archive/</span>. Archive enthalten dieselben personenbezogenen Daten (IP-Adressen) und werden nach der obigen Frist gelöscht.</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="storeDebug" value="1" <%= checked(settings.storeDebug) ? 'checked' : '' %>>
+            <span>DEBUG-Events speichern (Hintergrund-Abfragen, leere Job-Läufe) — erzeugt deutlich mehr Einträge.</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="traceQueries" value="1" <%= checked(settings.traceQueries) ? 'checked' : '' %>>
+            <span>Jede Datenbank-Abfrage protokollieren (nur zur Fehlersuche; SQL-Text, nie Parameter). Langsame Abfragen und DB-Fehler werden immer erfasst.</span>
+          </label>
+
+          <div class="row">
+            <button class="btn btn--primary" type="submit">Speichern</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="state-heading">
+        <div class="card__header"><h2 class="card__title" id="state-heading">Zustand</h2></div>
+        <div class="card__body stack" data-live-region="event-status">
+          <dl class="kv">
+            <dt>Geschrieben</dt><dd class="mono"><%= fmtNum(status.written) %> seit Start</dd>
+            <dt>In der Queue</dt><dd class="mono"><%= fmtNum(status.queued) %></dd>
+            <dt>Verworfen</dt><dd class="mono"><%= fmtNum(status.dropped) %></dd>
+            <dt>Schreibfehler</dt><dd class="mono"><%= fmtNum(status.writeFailures) %></dd>
+            <dt>Volltextsuche</dt><dd><%= status.ftsEnabled ? 'FTS5' : 'einfache Suche (FTS5 nicht verfügbar)' %></dd>
+          </dl>
+          <form method="POST" action="/admin/logs/purge"
+            data-confirm="Alle Einträge, die nach den aktuellen Regeln abgelaufen sind, werden jetzt gelöscht (bzw. archiviert, falls eingestellt)."
+            data-confirm-title="Löschregeln jetzt anwenden?" data-confirm-ok="Jetzt anwenden">
+            <button class="btn btn--secondary btn--sm" type="submit">Regeln jetzt anwenden</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="archives-heading">
+        <div class="card__header"><h2 class="card__title" id="archives-heading">Archive</h2></div>
+        <div class="card__body" data-live-region="event-archives">
+          <% if (archives.length === 0) { %>
+            <p class="hint">Keine Archivdateien vorhanden.</p>
+          <% } else { %>
+            <ul class="mini-list">
+              <% archives.forEach(archive => { %>
+                <li class="row row--between">
+                  <span>
+                    <a class="mono" href="/admin/logs/archives/<%= encodeURIComponent(archive.file) %>" download><%= archive.file %></a>
+                    <span class="hint"><%= formatSize(archive.size) %></span>
+                  </span>
+                  <form method="POST" action="/admin/logs/archives/<%= encodeURIComponent(archive.file) %>/delete"
+                    data-confirm="<%= archive.file %> wird endgültig entfernt." data-confirm-title="Archiv löschen?" data-confirm-ok="Löschen">
+                    <button class="btn btn--danger-ghost btn--sm" type="submit">Löschen</button>
+                  </form>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

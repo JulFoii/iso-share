@@ -12,7 +12,7 @@
     <header class="page-header">
       <h1 class="page-header__title">Verwaltung</h1>
       <p class="page-header__meta">
-        <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
+        <span><span data-visible-count><%= files.length %></span> <span data-count-noun data-singular="Datei" data-plural="Dateien"><%= files.length === 1 ? 'Datei' : 'Dateien' %></span></span>
         <span data-total-size><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
         <% if (files.length > 0) { %>
           <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
@@ -49,6 +49,13 @@
         </svg>
         Konto
       </a>
+      <a class="tab" href="#tab-tickets" data-tab-link="tickets">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Tickets
+        <span data-live-region="ticket-tab-badge"><%- include('partials/ticket-tab-badge', { unread: ticketStats.views.unread }) %></span>
+      </a>
     </nav>
 
     <div class="stack" id="tab-files" data-tab-panel="files">
@@ -82,21 +89,7 @@
               <span class="badge file-preview__size" id="filePreviewSize"></span>
             </div>
 
-            <% if (files.length > 0) { %>
-              <div class="field">
-                <label class="label" for="uploadReplaces">Ersetzt vorhandene Datei (optional)</label>
-                <select class="input" id="uploadReplaces" name="replaces">
-                  <option value="">— keine, als neue Datei hochladen —</option>
-                  <% files.forEach(file => { %>
-                    <option value="<%= file.name %>"><%= file.name %></option>
-                  <% }) %>
-                </select>
-                <span class="hint">
-                  Nützlich bei einer neueren Version unter anderem Namen — die
-                  gewählte Datei wird nach erfolgreichem Upload automatisch gelöscht.
-                </span>
-              </div>
-            <% } %>
+            <div data-live-region="upload-replaces"><%- include('partials/upload-replaces', { files }) %></div>
 
             <!-- Wird von upload.js gefuellt, wenn der Server zu dieser Datei
                  noch eine offene Upload-Sitzung hat. -->
@@ -139,8 +132,9 @@
           <h2 class="card__title" id="files-heading">Hochgeladene Images</h2>
         </div>
 
-        <% if (files.length === 0) { %>
-          <div class="empty">
+        <%# Leer-Hinweis und Tabelle stehen immer im Markup (siehe index.ejs):
+            heartbeat.js blendet um, sobald die erste Datei kommt/die letzte geht. %>
+          <div class="empty" data-files-empty <%= files.length > 0 ? 'hidden' : '' %>>
             <div class="empty__icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/>
@@ -150,8 +144,7 @@
             <p class="empty__title">Keine Dateien</p>
             <p class="empty__text">Lade oben ein ISO-Image hoch — es erscheint dann sofort in der öffentlichen Liste.</p>
           </div>
-        <% } else { %>
-          <div class="card__toolbar">
+          <div class="card__toolbar" data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
             <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/admin-search" method="GET" role="search">
               <svg class="search__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"/>
@@ -172,7 +165,7 @@
               <% } %>
             </form>
           </div>
-          <div data-tag-filter>
+          <div data-tag-filter data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
             <%- include('partials/tag-filter-panel', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/admin-search' }) %>
           </div>
 
@@ -185,7 +178,7 @@
             </div>
           </div>
 
-          <div class="table-scroll">
+          <div class="table-scroll" data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
             <table class="table" data-filetable>
               <thead>
                 <tr>
@@ -229,7 +222,6 @@
             <p class="empty__title">Keine Treffer</p>
             <p class="empty__text">Kein Dateiname passt zum Filter.</p>
           </div>
-        <% } %>
       </section>
     </div>
 
@@ -305,7 +297,7 @@
       <section class="card reveal" aria-labelledby="audit-heading">
         <div class="card__header">
           <h2 class="card__title" id="audit-heading">Audit-Log</h2>
-          <a class="btn btn--ghost btn--sm" href="/admin-audit-log">Alle ansehen</a>
+          <a class="btn btn--ghost btn--sm" href="/admin/logs?audit=1">Alle ansehen</a>
         </div>
         <div class="card__body">
           <p class="hint" id="auditWidgetEmpty" <%= auditEntries.length > 0 ? 'hidden' : '' %>>Noch keine Einträge.</p>
@@ -313,7 +305,7 @@
             <% auditEntries.slice(0, 8).forEach(entry => { %>
               <li class="row row--between" data-audit-id="<%= entry.id %>">
                 <span><span class="badge badge--mono"><%= entry.event %></span> <span class="hint"><%= entry.ip || '' %></span></span>
-                <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= new Date(entry.ts).toLocaleTimeString('de-DE') %></time>
+                <time class="hint" datetime="<%= new Date(entry.ts).toISOString() %>"><%= formatDate(entry.ts) %> <%= formatTime(entry.ts) %></time>
               </li>
             <% }); %>
           </ul>
@@ -333,14 +325,8 @@
             Sitzungen, Audit-Log …), nicht die ISO-Dateien selbst — die
             bleiben Sache regulärer Dateisystem-/Volume-Sicherung.
           </p>
-          <ul class="stack" id="backupList">
-            <%- include('partials/backup-rows', { backups }) %>
-            <% if (backups.length === 0) { %>
-              <li class="empty" data-backup-empty>
-                <p class="empty__title">Noch keine Sicherung</p>
-                <p class="empty__text">Läuft automatisch nach Zeitplan, oder jetzt manuell anstoßen.</p>
-              </li>
-            <% } %>
+          <ul class="stack" id="backupList" data-live-region="backups">
+            <%- include('partials/backup-list', { backups }) %>
           </ul>
           <form class="row mt-4" id="backupCreateForm" method="POST" action="/admin/backups">
             <button type="submit" class="btn btn--secondary" id="backupCreateButton">Jetzt sichern</button>
@@ -364,34 +350,9 @@
             </div>
           <% } %>
           <form class="stack" id="backupSettingsForm" method="POST" action="/admin/backup-settings">
-            <div class="field">
-              <label class="label" for="backupInterval">Intervall (Minuten)</label>
-              <input
-                class="input"
-                type="number"
-                id="backupInterval"
-                name="intervalMinutes"
-                min="5"
-                max="1440"
-                value="<%= backupSettings.intervalMinutes %>"
-                required>
+            <div class="stack" data-live-region="backup-settings">
+              <%- include('partials/backup-settings-fields', { backupSettings }) %>
             </div>
-            <div class="field">
-              <label class="label" for="backupRetention">Aufbewahrte Sicherungen</label>
-              <input
-                class="input"
-                type="number"
-                id="backupRetention"
-                name="retentionCount"
-                min="1"
-                max="500"
-                value="<%= backupSettings.retentionCount %>"
-                required>
-            </div>
-            <label class="row">
-              <input type="checkbox" id="backupEnabled" name="enabled" <%= backupSettings.enabled ? 'checked' : '' %>>
-              Automatische Sicherung aktiv
-            </label>
             <div class="row">
               <button type="submit" class="btn btn--secondary">Speichern</button>
             </div>
@@ -518,6 +479,24 @@
               <span class="hint">Gilt sofort für neue Anmeldungen; bestehende Sitzungen bleiben angemeldet.</span>
             </div>
           </form>
+        </div>
+      </section>
+    </div>
+
+    <div class="stack" id="tab-tickets" data-tab-panel="tickets">
+      <section class="card reveal" aria-labelledby="tickets-heading">
+        <div class="card__header">
+          <h2 class="card__title" id="tickets-heading">Support-Tickets</h2>
+          <a class="btn btn--primary btn--sm spacer" href="/admin/tickets">Zum Posteingang</a>
+        </div>
+        <div class="card__body stack">
+          <div class="stack" data-live-region="ticket-overview">
+            <%- include('partials/admin-ticket-overview', { ticketStats, recentTickets, customerCount }) %>
+          </div>
+          <p class="row">
+            <a class="btn btn--ghost btn--sm" href="/admin/customers"><%- include('partials/icon', { name: 'users', size: 14 }) %> Kunden</a>
+            <a class="btn btn--ghost btn--sm" href="/admin/ticket-settings"><%- include('partials/icon', { name: 'settings', size: 14 }) %> Einstellungen &amp; E-Mail</a>
+          </p>
         </div>
       </section>
     </div>
@@ -756,23 +735,24 @@
   </form>
 </dialog>
 
-<script src="/js/theme.js" defer></script>
-<script src="/js/idle-timer.js" defer></script>
-<script src="/js/toast.js" defer></script>
-<script src="/js/admin-tabs.js" defer></script>
-<script src="/js/filetable.js" defer></script>
-<script src="/js/delete-dialog.js" defer></script>
-<script src="/js/bulk-actions.js" defer></script>
-<script src="/js/row-details.js" defer></script>
-<script src="/js/copy.js" defer></script>
-<script src="/js/tags.js" defer></script>
-<script src="/js/upload.js" defer></script>
-<script src="/js/webauthn.js" defer></script>
-<script src="/js/totp.js" defer></script>
-<script src="/js/api-tokens.js" defer></script>
-<script src="/js/password-toggle.js" defer></script>
-<script src="/js/account-forms.js" defer></script>
-<script src="/js/backups.js" defer></script>
-<script src="/js/heartbeat.js" defer></script>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/admin-tabs.js') %>" defer></script>
+<script src="<%= asset('/js/filetable.js') %>" defer></script>
+<script src="<%= asset('/js/delete-dialog.js') %>" defer></script>
+<script src="<%= asset('/js/bulk-actions.js') %>" defer></script>
+<script src="<%= asset('/js/row-details.js') %>" defer></script>
+<script src="<%= asset('/js/copy.js') %>" defer></script>
+<script src="<%= asset('/js/tags.js') %>" defer></script>
+<script src="<%= asset('/js/upload.js') %>" defer></script>
+<script src="<%= asset('/js/webauthn.js') %>" defer></script>
+<script src="<%= asset('/js/totp.js') %>" defer></script>
+<script src="<%= asset('/js/api-tokens.js') %>" defer></script>
+<script src="<%= asset('/js/password-toggle.js') %>" defer></script>
+<script src="<%= asset('/js/account-forms.js') %>" defer></script>
+<script src="<%= asset('/js/backups.js') %>" defer></script>
+<script src="<%= asset('/js/heartbeat.js') %>" defer></script>
 </body>
 </html>

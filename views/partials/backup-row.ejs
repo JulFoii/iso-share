@@ -2,7 +2,7 @@
   <span>
     <span class="mono"><%= backup.file %></span>
     <% if (backup.preRestore) { %><span class="badge badge--mono">Sicherheitskopie</span><% } %>
-    <span class="hint">— <%= formatSize(backup.size) %>, <%= formatDate(backup.createdAt) %> <%= new Date(backup.createdAt).toLocaleTimeString('de-DE') %></span>
+    <span class="hint">— <%= formatSize(backup.size) %>, <%= formatDate(backup.createdAt) %> <%= formatTime(backup.createdAt) %></span>
   </span>
   <span class="row">
     <a class="btn btn--ghost btn--sm" href="/admin/backups/<%= encodeURIComponent(backup.file) %>/download" download>Herunterladen</a>

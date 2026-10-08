@@ -1,0 +1,30 @@
+<%
+/*
+ * Seitennavigation. include('partials/pagination', { page, pages, baseUrl, params })
+ * params: die aktuellen Filter als Objekt — page wird ersetzt.
+ */
+function pageHref(target) {
+  const search = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '' && key !== 'page') search.set(key, value);
+  });
+  if (target > 1) search.set('page', target);
+  const qs = search.toString();
+  return baseUrl + (qs ? '?' + qs : '');
+}
+%>
+<% if (pages > 1) { %>
+<nav class="pagination" aria-label="Seiten">
+  <% if (page > 1) { %>
+    <a class="btn btn--ghost btn--sm" href="<%= pageHref(page - 1) %>" rel="prev"><%- include('icon', { name: 'chevronLeft', size: 14 }) %> Zurück</a>
+  <% } else { %>
+    <span class="btn btn--ghost btn--sm" aria-disabled="true"><%- include('icon', { name: 'chevronLeft', size: 14 }) %> Zurück</span>
+  <% } %>
+  <span class="pagination__info">Seite <%= page %> von <%= pages %></span>
+  <% if (page < pages) { %>
+    <a class="btn btn--ghost btn--sm" href="<%= pageHref(page + 1) %>" rel="next">Weiter <%- include('icon', { name: 'chevronRight', size: 14 }) %></a>
+  <% } else { %>
+    <span class="btn btn--ghost btn--sm" aria-disabled="true">Weiter <%- include('icon', { name: 'chevronRight', size: 14 }) %></span>
+  <% } %>
+</nav>
+<% } %>

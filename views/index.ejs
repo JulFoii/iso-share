@@ -12,19 +12,20 @@
     <header class="page-header">
       <h1 class="page-header__title">ISO-Images</h1>
       <p class="page-header__meta">
-        <span><span data-visible-count><%= files.length %></span> <%= files.length === 1 ? 'Datei' : 'Dateien' %></span>
+        <span><span data-visible-count><%= files.length %></span> <span data-count-noun data-singular="Datei" data-plural="Dateien"><%= files.length === 1 ? 'Datei' : 'Dateien' %></span></span>
         <span data-total-size><%= formatSize(files.reduce((sum, file) => sum + file.size, 0)) %></span>
-        <% if (files.length > 0) { %>
-          <a class="page-header__link" href="/checksums" download>SHA256SUMS</a>
-        <% } %>
+        <a class="page-header__link" href="/checksums" download data-files-present <%= files.length > 0 ? '' : 'hidden' %>>SHA256SUMS</a>
       </p>
     </header>
 
+    <%# Tabelle, Suche und Leer-Hinweis stehen immer im Markup und werden nur
+        ein-/ausgeblendet (data-files-present/-empty): heartbeat.js kann so
+        die erste Datei in eine leere Liste einfuegen und nach dem Loeschen
+        der letzten den Hinweis zeigen, ohne dass die Seite neu laden muss. %>
     <div class="stack">
-      <% if (files.length > 0) { %>
         <!-- Ohne JavaScript sucht das Formular serverseitig, filetable.js
              filtert sonst direkt im Browser. -->
-        <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/search" method="GET" role="search">
+        <form class="search<%= typeof searchQuery !== 'undefined' && searchQuery ? ' search--active' : '' %>" action="/search" method="GET" role="search" data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
           <svg class="search__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7"/>
             <path d="m20 20-3.5-3.5"/>
@@ -43,14 +44,12 @@
             <a class="search__reset" href="/" aria-label="Suche zurücksetzen" title="Suche zurücksetzen">×</a>
           <% } %>
         </form>
-        <div data-tag-filter>
+        <div data-tag-filter data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
           <%- include('partials/tag-filter', { allTags: typeof allTags !== 'undefined' ? allTags : [], searchQuery: typeof searchQuery !== 'undefined' ? searchQuery : '', searchBase: '/search' }) %>
         </div>
-      <% } %>
 
       <div class="card card--flush reveal">
-        <% if (files.length === 0) { %>
-          <div class="empty">
+          <div class="empty" data-files-empty <%= files.length > 0 ? 'hidden' : '' %>>
             <div class="empty__icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="9"/>
@@ -60,7 +59,6 @@
             <p class="empty__title">Noch keine Images vorhanden</p>
             <p class="empty__text">Sobald ein Administrator ein ISO-Image hochlädt, erscheint es hier zum Download.</p>
           </div>
-        <% } else { %>
           <div class="card__toolbar bulk-bar" data-bulk-bar hidden>
             <span class="bulk-bar__count"><span data-bulk-count>0</span> ausgewählt</span>
             <div class="bulk-bar__actions">
@@ -69,7 +67,7 @@
             </div>
           </div>
 
-          <div class="table-scroll">
+          <div class="table-scroll" data-files-present <%= files.length > 0 ? '' : 'hidden' %>>
             <table class="table" data-filetable>
               <thead>
                 <tr>
@@ -113,7 +111,6 @@
             <p class="empty__title">Keine Treffer</p>
             <p class="empty__text">Kein Dateiname passt zum Filter. Versuche einen kürzeren Suchbegriff.</p>
           </div>
-        <% } %>
       </div>
     </div>
   </div>
@@ -121,13 +118,14 @@
 
 <%- include('partials/footer') %>
 
-<script src="/js/theme.js" defer></script>
-<script src="/js/idle-timer.js" defer></script>
-<script src="/js/filetable.js" defer></script>
-<script src="/js/row-details.js" defer></script>
-<script src="/js/copy.js" defer></script>
-<script src="/js/toast.js" defer></script>
-<script src="/js/bulk-actions.js" defer></script>
-<script src="/js/heartbeat.js" defer></script>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+<script src="<%= asset('/js/filetable.js') %>" defer></script>
+<script src="<%= asset('/js/row-details.js') %>" defer></script>
+<script src="<%= asset('/js/copy.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/bulk-actions.js') %>" defer></script>
+<script src="<%= asset('/js/heartbeat.js') %>" defer></script>
 </body>
 </html>

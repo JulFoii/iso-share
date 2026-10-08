@@ -30,6 +30,8 @@ const isoSearchValues = file.iso
   ? [file.iso.volumeId, file.iso.systemId, file.iso.publisher, file.iso.preparer, file.iso.application, file.iso.volumeSetId]
   : [];
 const searchText = [file.name].concat(tags, isoSearchValues).filter(Boolean).join(' ');
+// Offene Support-Tickets zu dieser Datei (nur Admin, siehe tickets.iso_file)
+const openTickets = admin ? openTicketsForFile(file.name) : 0;
 %>
 <tr data-search="<%= searchText %>" data-row="<%= rowKey %>">
 
@@ -143,6 +145,26 @@ const searchText = [file.name].concat(tags, isoSearchValues).filter(Boolean).joi
         <dt class="details__label">Downloads</dt>
         <dd class="details__value"><%= file.downloads %></dd>
       </div>
+
+      <% if (admin) { %>
+        <div class="details__item">
+          <dt class="details__label">Support</dt>
+          <dd class="details__value">
+            <% if (openTickets > 0) { %>
+              <a class="badge badge--warning" href="/admin/tickets?view=active&amp;file=<%= encodeURIComponent(file.name) %>"><%= openTickets %> offene<%= openTickets === 1 ? 's' : '' %> Ticket<%= openTickets === 1 ? '' : 's' %></a>
+            <% } else { %>
+              <a class="details__pending" href="/admin/tickets?view=all&amp;file=<%= encodeURIComponent(file.name) %>">keine offenen Tickets</a>
+            <% } %>
+          </dd>
+        </div>
+      <% } else { %>
+        <div class="details__item">
+          <dt class="details__label">Probleme?</dt>
+          <dd class="details__value">
+            <a href="/account/tickets/new?file=<%= encodeURIComponent(file.name) %>">Problem mit dieser Datei melden</a>
+          </dd>
+        </div>
+      <% } %>
 
       <% if (admin) { %>
         <div class="details__item details__item--wide">

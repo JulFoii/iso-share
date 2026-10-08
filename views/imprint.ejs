@@ -78,7 +78,9 @@
 
 <%- include('partials/footer') %>
 
-<script src="/js/theme.js" defer></script>
-<script src="/js/idle-timer.js" defer></script>
+<%# Nur fuer den Ticket-Zaehler der Navigation (GET /partials/nav) %>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
 </body>
 </html>

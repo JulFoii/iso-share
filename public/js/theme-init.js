@@ -27,5 +27,8 @@
       : preference;
 
   document.documentElement.dataset.theme = resolved;
+  // JS ist da: Inline-Absicherungen ([data-confirm-inline]) uebernimmt das
+  // Modal aus confirm.js — hier, weil dieses Skript vor dem ersten Paint laeuft.
+  document.documentElement.classList.add("js");
   document.documentElement.dataset.themePreference = preference;
 })();

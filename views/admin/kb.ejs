@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Hilfeartikel' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header page-header--actions">
+      <h1 class="page-header__title">Hilfeartikel</h1>
+      <a class="btn btn--primary btn--sm page-header__action" href="/admin/kb/new"><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Neuer Artikel</a>
+      <p class="page-header__meta" data-live-region="kb-meta">
+        <span><%= articles.length %> Artikel</span>
+        <span><%= articles.filter(a => a.published).length %> veröffentlicht</span>
+        <span><a class="page-header__link" href="/support">Öffentliche Hilfe ansehen</a></span>
+      </p>
+    </header>
+
+    <%- include('../partials/admin-ticket-nav', { current: 'kb' }) %>
+
+    <% const doneText = { deleted: 'Artikel gelöscht.', published: 'Artikel veröffentlicht.', unpublished: 'Artikel ist wieder ein Entwurf.' }[done]; %>
+    <% if (doneText) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: doneText }) %></div><% } %>
+
+    <div class="toolbar">
+      <form class="search search--compact" action="/admin/kb" method="GET" role="search">
+        <%- include('../partials/icon', { name: 'search', size: 15, cls: 'search__icon' }) %>
+        <input class="input input--sm" type="search" name="q" value="<%= q %>" placeholder="Titel oder Text …" aria-label="Artikel durchsuchen">
+      </form>
+    </div>
+
+    <div class="card card--flush" data-live-region="kb-list" data-live-guard-hover>
+      <% if (articles.length === 0) { %>
+        <div class="empty">
+          <div class="empty__icon"><%- include('../partials/icon', { name: 'book', size: 20 }) %></div>
+          <p class="empty__title"><%= q ? 'Keine Treffer' : 'Noch keine Artikel' %></p>
+          <p class="empty__text">Häufige Fragen einmal beantworten, statt sie in jedem Ticket neu zu schreiben — Artikel erscheinen unter <a href="/support">/support</a> und als Vorschlag beim Anlegen eines Tickets.</p>
+        </div>
+      <% } else { %>
+        <div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Titel</th>
+                <th scope="col">Kategorie</th>
+                <th scope="col">Status</th>
+                <th scope="col" class="table__num">Aufrufe</th>
+                <th scope="col" class="table__num">Geändert</th>
+                <th scope="col"><span class="visually-hidden">Aktionen</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% articles.forEach(article => { %>
+                <tr data-live-key="kb-<%= article.id %>">
+                  <td data-label="Titel"><a href="/admin/kb/<%= article.id %>"><%= article.title %></a><br><span class="hint mono">/support/articles/<%= article.slug %></span></td>
+                  <td data-label="Kategorie"><%= article.categoryName || '—' %></td>
+                  <td data-label="Status">
+                    <% if (article.published) { %><span class="badge badge--ok">Veröffentlicht</span><% } else { %><span class="badge">Entwurf</span><% } %>
+                  </td>
+                  <td data-label="Aufrufe" class="table__num"><%= article.views %></td>
+                  <td data-label="Geändert" class="table__num"><%= relativeTime(article.updatedAt) %></td>
+                  <td data-label="" class="table__actions">
+                    <form action="/admin/kb/<%= article.id %>/publish" method="POST">
+                      <input type="hidden" name="published" value="<%= article.published ? '0' : '1' %>">
+                      <button type="submit" class="btn btn--ghost btn--sm"><%= article.published ? 'Zurückziehen' : 'Veröffentlichen' %></button>
+                    </form>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

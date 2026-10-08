@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: article ? `Artikel: ${article.title}` : 'Neuer Artikel' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body>
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<main class="main" id="main">
+  <div class="container container--narrow">
+    <a class="back-link" href="/admin/kb"><%- include('../partials/icon', { name: 'arrowLeft', size: 14 }) %> Hilfeartikel</a>
+    <header class="page-header">
+      <h1 class="page-header__title"><%= article ? 'Artikel bearbeiten' : 'Neuer Artikel' %></h1>
+      <% if (article) { %>
+        <p class="page-header__meta">
+          <span><%= article.views %> <%= article.views === 1 ? 'Aufruf' : 'Aufrufe' %></span>
+          <span>geändert <%= relativeTime(article.updatedAt) %></span>
+          <span><a class="page-header__link" href="/support/articles/<%= article.slug %>">Ansehen</a></span>
+        </p>
+      <% } %>
+    </header>
+
+    <% if (error) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div><% } %>
+
+    <form class="card" action="<%= article ? `/admin/kb/${article.id}` : '/admin/kb' %>" method="POST">
+      <div class="card__body stack stack--sm">
+        <div class="field">
+          <label class="label" for="title">Titel</label>
+          <input class="input" id="title" name="title" value="<%= values.title %>" maxlength="<%= limits.title %>" required>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="categoryId">Kategorie</label>
+            <select class="input" id="categoryId" name="categoryId">
+              <option value="">— Allgemein —</option>
+              <% categories.forEach(category => { %>
+                <option value="<%= category.id %>" <%= values.categoryId === category.id ? 'selected' : '' %>><%= category.name %></option>
+              <% }); %>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="slug">Adresse <span class="text-muted">(optional)</span></label>
+            <input class="input mono" id="slug" name="slug" value="<%= values.slug %>" maxlength="80" placeholder="wird aus dem Titel gebildet">
+            <span class="hint">Nur ändern, wenn nötig — bereits verschickte Links zeigen auf die alte Adresse.</span>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="body">Text</label>
+          <textarea class="input textarea mono" id="body" name="body" rows="18" maxlength="<%= limits.body %>" required><%= values.body %></textarea>
+          <span class="hint">
+            Markdown: <code>## Überschrift</code>, <code>- Punkt</code>, <code>1. Schritt</code>, <code>**fett**</code>, <code>*kursiv*</code>,
+            <code>`Code`</code>, <code>```</code> für Codeblöcke, <code>[Text](https://…)</code>.
+          </span>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="published" value="1" <%= values.published ? 'checked' : '' %>>
+          <span>Veröffentlicht (unter /support sichtbar)</span>
+        </label>
+      </div>
+      <div class="card__footer">
+        <button type="submit" name="action" value="preview" class="btn btn--ghost" formnovalidate>Vorschau</button>
+        <button type="submit" name="action" value="save" class="btn btn--primary">Speichern</button>
+      </div>
+    </form>
+
+    <% if (previewHtml !== null) { %>
+      <section class="card kb-preview mt-4" aria-labelledby="preview-heading">
+        <div class="card__header"><h2 class="card__title" id="preview-heading">Vorschau<%= article && values.body === article.body ? '' : ' (nicht gespeichert)' %></h2></div>
+        <%# previewHtml stammt aus lib/markdown.js — escaped, bevor Tags entstehen %>
+        <div class="card__body prose"><%- previewHtml %></div>
+      </section>
+    <% } %>
+
+    <% if (article) { %>
+      <details class="card danger-zone mt-4">
+        <summary class="card__header"><span class="card__title">Artikel löschen</span></summary>
+        <form class="card__body stack stack--sm" action="/admin/kb/<%= article.id %>/delete" method="POST"
+          data-confirm="Links auf diesen Artikel (in Tickets, Mails) führen danach ins Leere."
+          data-confirm-title="Artikel „<%= article.title %>“ löschen?" data-confirm-ok="Löschen">
+          <p class="hint">Links auf diesen Artikel (in Tickets, Mails) führen danach ins Leere.</p>
+          <label class="check" data-confirm-inline>
+            <input type="checkbox" required>
+            <span>Ja, endgültig löschen</span>
+          </label>
+          <button type="submit" class="btn btn--danger btn--sm"><%- include('../partials/icon', { name: 'trash', size: 14 }) %> Löschen</button>
+        </form>
+      </details>
+    <% } %>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<%# Nur fuer den Ticket-Zaehler der Navigation (GET /partials/nav) %>
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/toast.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

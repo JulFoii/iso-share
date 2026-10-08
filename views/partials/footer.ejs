@@ -2,8 +2,15 @@
   <div class="container footer__inner">
     <span>&copy; <%= new Date().getFullYear() %> ISO Share</span>
     <nav class="footer__links" aria-label="Rechtliches">
+      <a href="/support">Support</a>
       <a href="/privacy">Datenschutz</a>
       <a href="/imprint">Impressum</a>
     </nav>
   </div>
 </footer>
+<%# Auf jeder Seite mit Footer: eigenes Modal fuer alle Rueckfragen
+    (data-confirm) und kein Sprung nach oben nach dem Absenden. Beide
+    veraendern beim Laden kein Region-Markup, stehen also unbedenklich vor
+    live-regions.js. %>
+<script src="<%= asset('/js/confirm.js') %>" defer></script>
+<script src="<%= asset('/js/scroll-keep.js') %>" defer></script>

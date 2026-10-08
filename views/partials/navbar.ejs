@@ -10,14 +10,18 @@
         <circle cx="12" cy="12" r="3"/>
         <path d="M12 3a9 9 0 0 1 8.49 6.05"/>
       </svg>
-      ISO Share
+      <span class="nav__brand-text">ISO Share</span>
     </a>
 
     <div class="nav__links">
-      <a class="nav__link" href="/" <%= currentPage === 'index' ? 'aria-current="page"' : '' %>>Dateien</a>
+      <a class="nav__link" href="/" <%- currentPage === 'index' ? 'aria-current="page"' : '' %>>Dateien</a>
 
       <% if (isLoggedIn) { %>
-        <a class="nav__link" href="/admin-upload" <%= currentPage === 'admin' ? 'aria-current="page"' : '' %>>Verwaltung</a>
+        <a class="nav__link" href="/admin-upload" <%- currentPage === 'admin' ? 'aria-current="page"' : '' %>>Verwaltung</a>
+        <a class="nav__link" href="/admin/tickets" <%- currentPage === 'admin-tickets' ? 'aria-current="page"' : '' %>>
+          Tickets <span data-live-region="nav-count"><%- include('nav-count', { count: typeof adminTicketBadge !== 'undefined' ? adminTicketBadge : 0, title: 'Ungelesene Tickets' }) %></span>
+        </a>
+        <a class="nav__link" href="/admin/logs" <%- currentPage === 'admin-logs' ? 'aria-current="page"' : '' %>>Logs</a>
         <span
           class="badge badge--mono"
           data-idle-remaining
@@ -25,11 +29,23 @@
           title="Automatische Abmeldung nach Inaktivität"
           aria-live="polite"
           hidden></span>
-        <a class="nav__link" href="/logout">Abmelden</a>
+        <a class="nav__link nav__link--logout" href="/logout" title="Abmelden"><svg class="nav__logout-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span class="nav__logout-text">Abmelden</span></a>
+      <% } else if (typeof currentCustomer !== 'undefined' && currentCustomer) { %>
+        <a class="nav__link" href="/account/tickets" <%- currentPage === 'account-tickets' ? 'aria-current="page"' : '' %>>
+          Meine Tickets <span data-live-region="nav-count"><%- include('nav-count', { count: customerUnread, title: 'Neue Antworten' }) %></span>
+        </a>
+        <a class="nav__link" href="/account/settings" <%- currentPage === 'account-settings' ? 'aria-current="page"' : '' %> title="Konto von <%= currentCustomer.email %>">Konto</a>
+        <a class="nav__link nav__link--logout" href="/account/logout" title="Abmelden"><svg class="nav__logout-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span class="nav__logout-text">Abmelden</span></a>
       <% } else { %>
-        <a class="nav__link" href="/login" <%= currentPage === 'login' ? 'aria-current="page"' : '' %>>Anmelden</a>
+        <a class="nav__link" href="/support" <%- currentPage === 'support' ? 'aria-current="page"' : '' %>>Support</a>
+        <a class="nav__link" href="/login" <%- currentPage === 'login' ? 'aria-current="page"' : '' %>>Anmelden</a>
       <% } %>
+    </div>
 
+    <%# Bewusst ausserhalb von .nav__links: die Linkleiste scrollt auf
+        schmalen Displays horizontal, der Umschalter bliebe dort als letztes
+        Element unsichtbar hinter dem Rand haengen. %>
+    <div class="nav__actions">
       <!-- popovertarget öffnet das Menü auch ohne JavaScript; theme.js hängt
            sich nur an die Auswahl. -->
       <button

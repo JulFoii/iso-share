@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <%- include('../partials/head', { title: 'Ticket-Einstellungen' }) %>
+  <meta name="robots" content="noindex">
+</head>
+<body data-live-page data-live-url="/admin/ticket-settings">
+<a class="skip-link" href="#main">Zum Inhalt springen</a>
+<%- include('../partials/navbar', { page: 'admin-tickets', loggedIn: true }) %>
+
+<%
+  const kindLabels = {
+    account_verify: 'Konto bestätigen', account_exists: 'Registrierungsversuch', password_reset: 'Passwort-Reset',
+    password_changed: 'Passwort geändert', email_change: 'Adresswechsel', account_deleted: 'Konto gelöscht',
+    ticket_created: 'Ticket-Eingang', ticket_reply: 'Antwort', ticket_status: 'Statuswechsel',
+    ticket_reminder: 'Erinnerung', ticket_reply_rejected: 'Antwort abgelehnt', admin_ticket_new: 'Admin: neues Ticket',
+    admin_ticket_reply: 'Admin: Kundenantwort', test: 'Testmail',
+  };
+  const outboxStatus = { pending: ['badge--warning', 'Wartend'], sent: ['badge--ok', 'Gesendet'], failed: ['badge--danger', 'Fehlgeschlagen'] };
+%>
+
+<main class="main" id="main">
+  <div class="container">
+    <header class="page-header">
+      <h1 class="page-header__title">Einstellungen &amp; E-Mail</h1>
+    </header>
+
+    <%- include('../partials/admin-ticket-nav', { current: 'settings' }) %>
+
+    <% if (success) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'success', text: success }) %></div><% } %>
+    <% if (error) { %><div class="mb-4"><%- include('../partials/alert', { variant: 'danger', text: error }) %></div><% } %>
+
+    <div class="settings-grid">
+      <section class="card settings-grid__wide" id="mail" aria-labelledby="mail-heading">
+        <div class="card__header"><h2 class="card__title" id="mail-heading">E-Mail</h2></div>
+        <div class="card__body stack">
+          <div class="status-grid" data-live-region="mail-status">
+            <div class="status-tile">
+              <span class="status-tile__label"><%- include('../partials/icon', { name: 'send', size: 14 }) %> Versand (SMTP)</span>
+              <% if (mailEnabled) { %>
+                <span class="badge badge--ok">Aktiv</span>
+                <span class="hint">Absender: <span class="mono"><%= mailFrom %></span></span>
+                <span class="hint"><%- include('../partials/icon', { name: 'lock', size: 12 }) %> <%= mailSecurity %></span>
+              <% } else { %>
+                <span class="badge badge--warning">Deaktiviert</span>
+                <span class="hint">SMTP_HOST setzen, um Mails zu verschicken.</span>
+              <% } %>
+            </div>
+            <div class="status-tile">
+              <span class="status-tile__label"><%- include('../partials/icon', { name: 'inbox', size: 14 }) %> Empfang (IMAP)</span>
+              <% if (imap.enabled) { %>
+                <span class="badge <%= imap.lastError ? 'badge--danger' : 'badge--ok' %>"><%= imap.lastError ? 'Fehler' : 'Aktiv' %></span>
+                <span class="hint"><%- include('../partials/icon', { name: 'lock', size: 12 }) %> <%= imap.security %></span>
+                <span class="hint">Postfach <span class="mono"><%= imap.mailbox %></span> · letzter Abruf <%= imap.lastRunAt ? relativeTime(imap.lastRunAt) : 'noch nie' %> · <%= imap.totalProcessed %> verarbeitet</span>
+                <span class="hint"><%= inboundNewTickets ? 'Neue Tickets per E-Mail: aktiv (DKIM/DMARC-geprüft)' : 'Neue Tickets per E-Mail: aus — IMAP_AUTHSERV_ID setzen' %></span>
+                <% if (imap.lastError) { %><span class="hint text-danger"><%= imap.lastError %></span><% } %>
+              <% } else { %>
+                <span class="badge badge--warning">Deaktiviert</span>
+                <span class="hint">IMAP_HOST/IMAP_USER setzen, damit Kunden per E-Mail antworten können.</span>
+              <% } %>
+            </div>
+            <div class="status-tile">
+              <span class="status-tile__label"><%- include('../partials/icon', { name: 'mail', size: 14 }) %> Admin-Benachrichtigungen</span>
+              <% if (notifyEmail) { %>
+                <span class="badge badge--ok">An</span>
+                <span class="hint mono"><%= notifyEmail %></span>
+              <% } else { %>
+                <span class="badge badge--warning">Aus</span>
+                <span class="hint">TICKET_NOTIFY_EMAIL setzen.</span>
+              <% } %>
+            </div>
+            <div class="status-tile">
+              <span class="status-tile__label"><%- include('../partials/icon', { name: 'shield', size: 14 }) %> Links in Mails</span>
+              <span class="hint mono"><%= publicUrl %></span>
+              <span class="hint">Über PUBLIC_URL festgelegt.</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <form class="inline-form" action="/admin/mail/test" method="POST">
+              <input class="input input--sm" type="email" name="to" placeholder="<%= notifyEmail || 'empfaenger@example.com' %>" aria-label="Empfänger der Testmail" <%= mailEnabled ? '' : 'disabled' %>>
+              <button type="submit" class="btn btn--secondary btn--sm" <%= mailEnabled ? '' : 'disabled' %>>Testmail senden</button>
+            </form>
+            <% if (imap.enabled) { %>
+              <form action="/admin/mail/imap/poll" method="POST">
+                <button type="submit" class="btn btn--ghost btn--sm"><%- include('../partials/icon', { name: 'refresh', size: 14 }) %> Postfach jetzt abrufen</button>
+              </form>
+            <% } %>
+          </div>
+
+          <div data-live-region="outbox">
+            <p class="label mb-2">Warteschlange · <%= outboxCounts.pending %> wartend · <%= outboxCounts.sent %> gesendet · <%= outboxCounts.failed %> fehlgeschlagen</p>
+            <% if (outboxMails.length === 0) { %>
+              <p class="hint">Noch keine Mails verschickt.</p>
+            <% } else { %>
+              <div class="table-scroll">
+                <table class="table table--compact">
+                  <thead>
+                    <tr><th scope="col">Art</th><th scope="col">Empfänger</th><th scope="col">Betreff</th><th scope="col">Status</th><th scope="col" class="table__num">Erstellt</th><th scope="col"></th></tr>
+                  </thead>
+                  <tbody>
+                    <% outboxMails.forEach(mail => { %>
+                      <tr data-live-key="mail-<%= mail.id %>">
+                        <td data-label="Art"><%= kindLabels[mail.kind] || mail.kind %></td>
+                        <td data-label="Empfänger" class="mono"><%= mail.to %></td>
+                        <td data-label="Betreff"><%= mail.subject %></td>
+                        <td data-label="Status">
+                          <span class="badge <%= outboxStatus[mail.status][0] %>"><%= outboxStatus[mail.status][1] %></span>
+                          <% if (mail.lastError) { %>
+                            <span class="hint" title="<%= mail.lastError %>"><%= mail.attempts %>× · <%= mail.lastError.slice(0, 60) %></span>
+                            <% if (mail.status === 'pending') { %><span class="hint">Vorübergehend abgelehnt — nächster Versuch <%= formatDateTime(mail.nextAttemptAt) %></span><% } %>
+                          <% } %>
+                        </td>
+                        <td data-label="Erstellt" class="table__num"><%= relativeTime(mail.createdAt) %></td>
+                        <td>
+                          <% if (mail.status === 'failed') { %>
+                            <form action="/admin/mail/outbox/<%= mail.id %>/retry" method="POST">
+                              <button type="submit" class="btn btn--ghost btn--sm">Erneut senden</button>
+                            </form>
+                          <% } %>
+                        </td>
+                      </tr>
+                    <% }); %>
+                  </tbody>
+                </table>
+              </div>
+            <% } %>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settings-grid__wide" id="automation" aria-labelledby="automation-heading">
+        <div class="card__header"><h2 class="card__title" id="automation-heading">Automatik</h2></div>
+        <form class="card__body stack stack--sm" action="/admin/ticket-settings/automation" method="POST">
+          <%# Volle Breite, Felder nebeneinander: allein in einer halben Spalte
+              liess die Karte rechts daneben eine grosse Luecke. %>
+          <div class="grid-2 grid-2--end" data-live-region="automation">
+          <div class="field">
+            <label class="label" for="pendingReminderDays">Erinnerung nach … Tagen ohne Kundenantwort</label>
+            <input class="input input--sm" type="number" id="pendingReminderDays" name="pendingReminderDays" min="<%= limits.pendingReminderDays[0] %>" max="<%= limits.pendingReminderDays[1] %>" value="<%= settings.pendingReminderDays %>" required>
+          </div>
+          <div class="field">
+            <label class="label" for="pendingAutoResolveDays">Danach automatisch „gelöst“ nach … Tagen</label>
+            <input class="input input--sm" type="number" id="pendingAutoResolveDays" name="pendingAutoResolveDays" min="<%= limits.pendingAutoResolveDays[0] %>" max="<%= limits.pendingAutoResolveDays[1] %>" value="<%= settings.pendingAutoResolveDays %>" required>
+          </div>
+          <div class="field">
+            <label class="label" for="autoCloseDays">Gelöste Tickets schließen nach … Tagen</label>
+            <input class="input input--sm" type="number" id="autoCloseDays" name="autoCloseDays" min="<%= limits.autoCloseDays[0] %>" max="<%= limits.autoCloseDays[1] %>" value="<%= settings.autoCloseDays %>" required>
+          </div>
+          </div>
+          <p class="hint">Jede Kunden- und jede neue Support-Antwort setzt die Uhr zurück. Ein gelöstes Ticket kann der Kunde bis zum Schließen per Antwort wieder öffnen.</p>
+          <div><button type="submit" class="btn btn--secondary btn--sm">Speichern</button></div>
+        </form>
+      </section>
+
+      <section class="card settings-grid__wide" id="sla" aria-labelledby="sla-heading">
+        <div class="card__header"><h2 class="card__title" id="sla-heading">Antwortfristen</h2></div>
+        <form class="card__body stack stack--sm" action="/admin/ticket-settings/sla" method="POST">
+          <div class="table-scroll" data-live-region="sla">
+            <table class="table table--compact">
+              <thead>
+                <tr>
+                  <th scope="col">Priorität</th>
+                  <th scope="col">Erstantwort (Std.)</th>
+                  <th scope="col">Folgeantwort (Std.)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% ['urgent', 'high', 'normal', 'low'].forEach(priority => { %>
+                  <tr>
+                    <th scope="row"><%- include('../partials/ticket-priority', { priority }) %></th>
+                    <td><input class="input input--sm" type="number" min="0" max="<%= slaMaxHours %>" step="0.25" name="<%= priority %>_first" value="<%= sla[priority].firstResponseHours %>" aria-label="Erstantwort <%= priorityLabels[priority] %> in Stunden"></td>
+                    <td><input class="input input--sm" type="number" min="0" max="<%= slaMaxHours %>" step="0.25" name="<%= priority %>_next" value="<%= sla[priority].nextResponseHours %>" aria-label="Folgeantwort <%= priorityLabels[priority] %> in Stunden"></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+          <p class="hint">Kalenderstunden, 0 = keine Frist. Die Erstantwort zählt ab Eingang, die Folgeantwort ab der letzten Kundennachricht; solange der Kunde am Zug ist, läuft keine Frist. Überschrittene Fristen stehen im Posteingang unter „Frist überschritten“<%= notifyEmail ? ' und werden einmal per Mail gemeldet' : '' %>.</p>
+          <div><button type="submit" class="btn btn--secondary btn--sm">Speichern</button></div>
+        </form>
+      </section>
+
+      <section class="card settings-grid__wide" id="reply-template" aria-labelledby="reply-template-heading">
+        <div class="card__header"><h2 class="card__title" id="reply-template-heading">Anrede &amp; Grußformel</h2></div>
+        <div class="card__body reply-template" data-live-region="reply-template">
+          <form class="stack stack--sm" action="/admin/ticket-settings/reply-template" method="POST">
+            <p class="hint">Steht als Vorbelegung im Antwortfeld jedes Tickets und lässt sich dort vor dem Senden frei bearbeiten — bei internen Notizen nicht. Platzhalter: <span class="mono">{name}</span> (Kundenname) und <span class="mono">{agent}</span> (Anzeigename). Ein leeres Feld schaltet den Teil ab.</p>
+            <div class="field">
+              <label class="label" for="greeting">Anrede</label>
+              <input class="input input--sm" id="greeting" name="greeting" maxlength="<%= replyTemplateLimits.greeting %>" value="<%= replyTemplate.greeting %>" placeholder="Hallo {name},">
+            </div>
+            <div class="field">
+              <label class="label" for="signature">Grußformel</label>
+              <textarea class="input input--sm textarea" id="signature" name="signature" rows="3" maxlength="<%= replyTemplateLimits.signature %>" placeholder="Mit freundlichen Grüßen&#10;{agent}&#10;ISO Share Support"><%= replyTemplate.signature %></textarea>
+            </div>
+            <div class="field">
+              <label class="label" for="agentName">Anzeigename für <span class="mono">{agent}</span></label>
+              <input class="input input--sm" id="agentName" name="agentName" maxlength="<%= replyTemplateLimits.agentName %>" value="<%= replyTemplate.agentName %>" placeholder="<%= fallbackAgent %>">
+              <span class="hint">Leer = Admin-Benutzername (<span class="mono"><%= fallbackAgent %></span>).</span>
+            </div>
+            <div><button type="submit" class="btn btn--secondary btn--sm">Speichern</button></div>
+          </form>
+          <div>
+            <p class="label mb-2">Vorschau</p>
+            <pre class="reply-template__preview"><%= replyTemplatePreview %></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="categories" aria-labelledby="categories-heading">
+        <div class="card__header"><h2 class="card__title" id="categories-heading">Kategorien</h2></div>
+        <div class="card__body stack stack--sm" data-live-region="categories">
+          <% if (categories.length === 0) { %><p class="hint">Keine Kategorien — Kunden sehen dann keine Auswahl.</p><% } %>
+          <ul class="edit-list">
+            <% categories.forEach(category => { %>
+              <li data-live-key="category-<%= category.id %>">
+                <form class="row" action="/admin/ticket-settings/categories/<%= category.id %>" method="POST">
+                  <input class="input input--sm" name="name" value="<%= category.name %>" maxlength="60" aria-label="Name der Kategorie" required>
+                  <button type="submit" class="btn btn--ghost btn--sm">Umbenennen</button>
+                  <button type="submit" class="btn btn--danger-ghost btn--sm btn--icon" name="delete" value="1" formnovalidate aria-label="Kategorie <%= category.name %> löschen"
+                    data-confirm="Tickets dieser Kategorie behalten ihren Inhalt, stehen danach aber ohne Kategorie da." data-confirm-title="Kategorie „<%= category.name %>“ löschen?" data-confirm-ok="Löschen"><%- include('../partials/icon', { name: 'trash', size: 14 }) %></button>
+                </form>
+              </li>
+            <% }); %>
+          </ul>
+          <form class="row" action="/admin/ticket-settings/categories" method="POST">
+            <input class="input input--sm" name="name" maxlength="60" placeholder="Neue Kategorie" aria-label="Neue Kategorie" required>
+            <button type="submit" class="btn btn--secondary btn--sm"><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Hinzufügen</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="storage-heading">
+        <div class="card__header"><h2 class="card__title" id="storage-heading">Anhänge</h2></div>
+        <div class="card__body stack stack--sm" data-live-region="attachments">
+          <p><strong><%= attachmentTotals.count %></strong> <%= attachmentTotals.count === 1 ? 'Datei' : 'Dateien' %> · <strong><%= formatSize(attachmentTotals.bytes) %></strong></p>
+          <p class="hint">Liegen unter <span class="mono">DATA_DIR/ticket-attachments/</span> — nicht Teil der Datenbank-Backups, aber im selben Volume.</p>
+        </div>
+      </section>
+
+      <section class="card settings-grid__wide" id="canned" aria-labelledby="canned-heading">
+        <div class="card__header"><h2 class="card__title" id="canned-heading">Textbausteine</h2></div>
+        <div class="card__body stack stack--sm" data-live-region="canned">
+          <p class="hint">Vorformulierte Antworten, die sich im Ticket mit einem Klick einfügen lassen.</p>
+          <% canned.forEach(item => { %>
+            <details class="canned" data-live-key="canned-<%= item.id %>">
+              <summary><%- include('../partials/icon', { name: 'book', size: 14 }) %> <%= item.title %></summary>
+              <form class="stack stack--sm" action="/admin/ticket-settings/canned/<%= item.id %>" method="POST">
+                <input class="input input--sm" name="title" value="<%= item.title %>" maxlength="80" aria-label="Titel" required>
+                <textarea class="input input--sm textarea" name="body" rows="5" maxlength="10000" aria-label="Text" required><%= item.body %></textarea>
+                <div class="row">
+                  <button type="submit" class="btn btn--secondary btn--sm">Speichern</button>
+                  <button type="submit" class="btn btn--danger-ghost btn--sm" name="delete" value="1" formnovalidate
+                    data-confirm="Der Textbaustein steht danach im Antwortfeld nicht mehr zur Auswahl." data-confirm-title="Textbaustein „<%= item.title %>“ löschen?" data-confirm-ok="Löschen">Löschen</button>
+                </div>
+              </form>
+            </details>
+          <% }); %>
+          <details class="canned" data-live-key="canned-new" <%= canned.length === 0 ? 'open' : '' %>>
+            <summary><%- include('../partials/icon', { name: 'plus', size: 14 }) %> Neuer Textbaustein</summary>
+            <form class="stack stack--sm" action="/admin/ticket-settings/canned" method="POST">
+              <input class="input input--sm" name="title" maxlength="80" placeholder="Titel, z. B. „Download-Mirror wechseln“" aria-label="Titel" required>
+              <textarea class="input input--sm textarea" name="body" rows="5" maxlength="10000" placeholder="Text …" aria-label="Text" required></textarea>
+              <div><button type="submit" class="btn btn--secondary btn--sm">Anlegen</button></div>
+            </form>
+          </details>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="<%= asset('/js/live-regions.js') %>" defer></script>
+<script src="<%= asset('/js/theme.js') %>" defer></script>
+<script src="<%= asset('/js/idle-timer.js') %>" defer></script>
+</body>
+</html>

@@ -29,7 +29,6 @@
   var previewSize = document.getElementById("filePreviewSize");
   var resume = document.getElementById("uploadResume");
   var resumeText = document.getElementById("uploadResumeText");
-  var replacesSelect = document.getElementById("uploadReplaces");
   var progress = document.getElementById("uploadProgress");
   var bar = document.getElementById("uploadProgressBar");
   var percentLabel = document.getElementById("uploadPercent");
@@ -298,6 +297,7 @@
     } catch (e) {
       // Ohne sessionStorage entfaellt nur die Bestaetigung nach dem Reload
     }
+    if (typeof window.keepScroll === "function") window.keepScroll();
     window.location.assign("/admin-upload");
   }
 
@@ -307,13 +307,20 @@
     job = null;
   }
 
+  // Erst beim Absenden gesucht: heartbeat.js ersetzt die Auswahl, sobald
+  // Dateien dazukommen/wegfallen (Live-Bereich "upload-replaces").
+  function replacesValue() {
+    var select = document.getElementById("uploadReplaces");
+    return select && select.value ? select.value : undefined;
+  }
+
   async function startOrResume(file) {
     var response;
     try {
       response = await postJson("/upload/init", {
         name: file.name,
         size: file.size,
-        replaces: replacesSelect && replacesSelect.value ? replacesSelect.value : undefined,
+        replaces: replacesValue(),
       });
     } catch (e) {
       fail("Netzwerkfehler beim Start des Uploads.");
@@ -406,6 +413,20 @@
 
   cancelButton.addEventListener("click", function () {
     if (!job) return;
+    var ask = typeof window.appConfirm === "function"
+      ? window.appConfirm({
+        title: "Upload abbrechen?",
+        text: "Die bisher übertragenen Daten von „" + job.file.name + "“ werden verworfen, ein Fortsetzen ist danach nicht mehr möglich.",
+        ok: "Upload abbrechen",
+      })
+      : Promise.resolve(true);
+    ask.then(function (confirmed) {
+      if (confirmed) cancelUpload();
+    });
+  });
+
+  function cancelUpload() {
+    if (!job) return;
     var id = job.id;
     job.cancelled = true;
     if (job.xhr) job.xhr.abort();
@@ -415,7 +436,7 @@
     resetUi();
     resume.hidden = true;
     notify("Upload abgebrochen.", "info");
-  });
+  }
 
   /* Bestaetigung nach dem Reload nachtragen */
   try {

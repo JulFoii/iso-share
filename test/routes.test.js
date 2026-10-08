@@ -135,6 +135,121 @@ test('/admin/partials/listing: nur mit Sitzung erreichbar, liefert Dateien/Tags/
     assert.ok(body.auditEntries.every(entry => typeof entry.id === 'number'));
 });
 
+test('/admin/partials/listing liefert die Live-Bereiche fuer live-regions.js (Backups, Ticket-Uebersicht, Zaehler)', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const before = await (await fetch(app.url('/admin/partials/listing'), {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    })).json();
+    for (const key of ['nav-count', 'ticket-tab-badge', 'ticket-overview', 'backups', 'backup-settings', 'upload-replaces']) {
+        assert.equal(typeof before.regions[key], 'string', key);
+    }
+    assert.deepEqual(before.account, { username: 'admin', totpEnabled: false });
+    assert.match(before.regions.backups, /data-backup-empty/);
+    assert.match(before.regions['backup-settings'], /name="intervalMinutes"/);
+
+    // Eine neue Sicherung (z. B. aus dem Zeitplan) taucht beim naechsten Poll auf.
+    const created = await fetch(app.url('/admin/backups'), {
+        method: 'POST', headers: { Cookie: cookie, Accept: 'application/json', Origin: app.url('') },
+    });
+    assert.equal(created.status, 201);
+    const after = await (await fetch(app.url('/admin/partials/listing'), {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+    })).json();
+    assert.match(after.regions.backups, /data-backup-file="iso-share-/);
+
+    // Die Seite selbst traegt dieselben Bereiche, sonst liefe das Ersetzen ins Leere.
+    const page = await (await fetch(app.url('/admin-upload'), { headers: { Cookie: cookie } })).text();
+    for (const key of ['nav-count', 'ticket-tab-badge', 'ticket-overview', 'backups', 'backup-settings', 'upload-replaces']) {
+        assert.match(page, new RegExp(`data-live-region="${key}"`), key);
+    }
+    // Felder, die heartbeat.js per id aktualisiert (syncAccount)
+    for (const id of ['usernameInput', 'totpStatusBadge', 'totpSetupButton', 'totpDisableButton']) {
+        assert.match(page, new RegExp(`id="${id}"`), id);
+    }
+});
+
+test('/admin/partials/listing: "Ersetzt vorhandene Datei" folgt neuen Uploads, Konto-Werte folgen Aenderungen', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+    const poll = async () => (await fetch(app.url('/admin/partials/listing'), {
+        headers: { Cookie: cookie, Accept: 'application/json', 'X-Idle-Background': '1' },
+    })).json();
+
+    // Ohne Dateien gibt es nichts zu ersetzen — der Bereich bleibt leer,
+    // existiert auf der Seite aber trotzdem (sonst koennte die Auswahl nie
+    // nachtraeglich erscheinen).
+    assert.doesNotMatch((await poll()).regions['upload-replaces'], /<select/);
+    await seedIso(app, 'spaeter-dazu.iso');
+    assert.match((await poll()).regions['upload-replaces'], /<option value="spaeter-dazu\.iso">/);
+
+    await app.services.usernameStore.write('betrieb');
+    assert.equal((await poll()).account.username, 'betrieb');
+});
+
+test('Leere Dateiliste: Tabelle steht trotzdem im Markup, damit der Heartbeat die erste Datei einfuegen kann', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    for (const [pathname, headers] of [['/', {}], ['/admin-upload', { Cookie: cookie }]]) {
+        const empty = await (await fetch(app.url(pathname), { headers })).text();
+        assert.match(empty, /<tbody data-file-rows>/, pathname);
+        assert.match(empty, /class="table-scroll" data-files-present hidden/, pathname);
+        assert.match(empty, /class="empty" data-files-empty >/, pathname);
+    }
+
+    await seedIso(app, 'erste.iso');
+    for (const [pathname, headers] of [['/', {}], ['/admin-upload', { Cookie: cookie }]]) {
+        const filled = await (await fetch(app.url(pathname), { headers })).text();
+        assert.match(filled, /class="table-scroll" data-files-present >/, pathname);
+        assert.match(filled, /class="empty" data-files-empty hidden/, pathname);
+        assert.match(filled, /data-count-noun data-singular="Datei" data-plural="Dateien">Datei</, pathname);
+    }
+});
+
+test('/partials/nav: Ticket-Zaehler fuer Seiten ohne eigenes Polling, leer fuer Anonyme', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+
+    const anonymous = await fetch(app.url('/partials/nav'), { headers: { Accept: 'application/json' } });
+    assert.equal(anonymous.status, 200);
+    assert.deepEqual(await anonymous.json(), { regions: { 'nav-count': '' } });
+
+    const { cookie } = await app.login();
+    const admin = await (await fetch(app.url('/partials/nav'), {
+        headers: { Cookie: cookie, Accept: 'application/json', 'X-Idle-Background': '1' },
+    })).json();
+    assert.equal(typeof admin.regions['nav-count'], 'string');
+
+    // Die statischen Seiten binden live-regions.js dafuer ein (ohne eigenes
+    // data-live-page), die Datenschutzerklaerung ist selbst live (Fristen).
+    for (const pathname of ['/imprint', '/privacy', '/support']) {
+        const html = await (await fetch(app.url(pathname), { headers: { Cookie: cookie } })).text();
+        assert.match(html, /\/js\/live-regions\.js/, pathname);
+        assert.match(html, /data-live-region="nav-count"/, pathname);
+    }
+    const privacy = await (await fetch(app.url('/privacy'))).text();
+    assert.match(privacy, /<body data-live-page>/);
+    assert.match(privacy, /data-live-region="retention"/);
+});
+
+test('pollLimiter: angemeldete Sitzungen hinter derselben IP teilen sich kein Kontingent', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie: first } = await app.login();
+    const { cookie: second } = await app.login();
+    const nav = cookie => fetch(app.url('/partials/nav'), { headers: { Cookie: cookie, Accept: 'application/json' } });
+
+    let status = 200;
+    for (let i = 0; i < 61 && status === 200; i += 1) status = (await nav(first)).status;
+    assert.equal(status, 429, 'die erste Sitzung erreicht ihr Limit');
+    assert.equal((await nav(second)).status, 200, 'die zweite Sitzung pollt unbeeindruckt weiter');
+});
+
 test('/checksums laesst noch nicht gehashte Dateien weg', async t => {
     const app = await startTestApp();
     t.after(() => app.close());
