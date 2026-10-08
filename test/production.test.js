@@ -797,6 +797,6 @@ test('Dockerfile laeuft als node-User mit gepinntem Basis-Image und Healthcheck'
     const dockerfile = await fsp.readFile(path.join(ROOT, 'Dockerfile'), 'utf8');
     assert.match(dockerfile, /^FROM node:\d+\.\d+-alpine/m);
     assert.match(dockerfile, /^USER node$/m);
-    assert.match(dockerfile, /^HEALTHCHECK .*\n?.*\/healthz/m);
+    assert.match(dockerfile, /^HEALTHCHECK .*\r?\n?.*\/healthz/m);
     assert.match(dockerfile, /npm ci --omit=dev/);
 });
