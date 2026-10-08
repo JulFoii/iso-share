@@ -12,15 +12,15 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@simplewebauthn/server": "^14.0.2",
+    "@simplewebauthn/server": "^14.0.3",
     "ejs": "^3.1.10",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "express-session": "^1.18.1",
     "helmet": "^8.3.0",
-    "imapflow": "^2.0.6",
+    "imapflow": "^2.2.5",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.10"
+    "nodemailer": "^10.0.15"
   },
   "engines": {
     "node": ">=22.5.0"
