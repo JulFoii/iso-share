@@ -3,7 +3,7 @@
 # ExperimentalWarning laeuft (auf v22/23 noch flag- bzw. warnungspflichtig).
 # Auf Major.Minor gepinnt, damit ein Rebuild reproduzierbar dasselbe Image
 # liefert; Dependabot (.github/dependabot.yml) schlaegt Updates als PR vor.
-FROM node:24.18-alpine
+FROM node:26.10-alpine
 
 WORKDIR /app
 
