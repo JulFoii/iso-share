@@ -13,14 +13,14 @@
   "license": "ISC",
   "dependencies": {
     "@simplewebauthn/server": "^14.0.3",
-    "ejs": "^7.0.1",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.7.0",
+    "ejs": "^7.0.2",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
     "express-session": "^1.18.1",
     "helmet": "^8.3.0",
-    "imapflow": "^2.3.0",
-    "multer": "^2.4.0",
-    "nodemailer": "^10.0.16"
+    "imapflow": "^2.9.1",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.2.1"
   },
   "engines": {
     "node": ">=22.5.0"
