@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
+        id: setup-node
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -33,6 +34,7 @@ jobs:
       - name: Tests
         run: npm test
       - name: Security audit
+        if: ${{ !cancelled() && steps.setup-node.outcome == 'success' }}
         run: npm audit --omit=dev --audit-level=high
 
   docker:

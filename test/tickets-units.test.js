@@ -767,6 +767,17 @@ test('imap-poller: holt ungelesene Mails, reicht sie weiter und markiert sie als
     assert.equal(await disabled.pollOnce(), 0);
 });
 
+test('imap-poller: Verbindungsfehler ohne Meldung bleibt im Status sichtbar', async () => {
+    const err = Object.assign(new AggregateError([]), { code: 'ECONNREFUSED' });
+    const poller = createImapPoller({
+        host: 'imap.test', user: 'support@iso.test', log: QUIET,
+        clientFactory: () => ({ async connect() { throw err; } }),
+    });
+
+    assert.equal(await poller.pollOnce(), 0);
+    assert.equal(poller.status.lastError, 'ECONNREFUSED');
+});
+
 /* ====================================================== ticket-automation */
 
 test('ticket-automation: Erinnerung, danach automatisch geloest, danach geschlossen', async () => {
