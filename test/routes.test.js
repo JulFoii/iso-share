@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { once } = require('events');
+const { gzipSync } = require('node:zlib');
 
 const { startTestApp } = require('./helpers/app');
 const { makeIso } = require('./helpers/make-iso');
@@ -910,6 +911,22 @@ test('ohne ADMIN_PASSWORD wird beim ersten Start genau einmal ein Passwort erzeu
 });
 
 /* ======================================================= Upload (Chunks) */
+
+test('Upload-Init akzeptiert gzip-komprimiertes JSON', async t => {
+    const app = await startTestApp();
+    t.after(() => app.close());
+    const { cookie } = await app.login();
+
+    const res = await fetch(app.url('/upload/init'), {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        body: gzipSync(JSON.stringify({ name: 'komprimiert.iso', size: 1024 })),
+    });
+    assert.equal(res.status, 201);
+    const session = await res.json();
+    assert.equal(session.offset, 0);
+    assert.ok(session.id);
+});
 
 test('fortsetzbarer Upload: init, zwei Chunks, finish', async t => {
     const app = await startTestApp();

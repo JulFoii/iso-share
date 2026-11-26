@@ -6,6 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fsp = require('fs/promises');
+const path = require('node:path');
 
 const { startTestApp } = require('./helpers/app');
 
@@ -119,6 +120,32 @@ test('Anhang mit Umlauten im Dateinamen kommt unveraendert an', async t => {
     const res = await fetch(app.url(`/attachments/${attachment.id}`), { headers: { Cookie: cookie } });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-disposition'), /filename\*=UTF-8''Gr%C3%B6%C3%9Fe_%C3%9F\.png/);
+});
+
+test('Multipart-Textfeld am Byte-Limit wird angenommen und darüber sauber abgelehnt', async t => {
+    const app = await startTicketApp();
+    t.after(() => app.close());
+    const cookie = await registerCustomer(app);
+    const message = 'ä'.repeat(64 * 1024);
+
+    const send = text => {
+        const form = new FormData();
+        form.set('subject', 'Multipart-Limit');
+        form.append('attachments', new Blob([PNG]), 'screen.png');
+        form.set('message', text);
+        return fetch(app.url('/account/tickets'), {
+            method: 'POST', body: form, headers: { Cookie: cookie }, redirect: 'manual',
+        });
+    };
+
+    const oversized = await send(message + 'a');
+    assert.equal(oversized.status, 400);
+    assert.match(await oversized.text(), /Ein Formularfeld ist zu groß/);
+    assert.deepEqual(await fsp.readdir(path.join(app.root, 'tmp-uploads')), []);
+
+    const accepted = await send(message);
+    assert.equal(accepted.status, 303);
+    assert.equal(accepted.headers.get('location'), '/account/tickets/1001?created=1');
 });
 
 test('Registrierung verraet nicht, ob eine Adresse schon existiert; Passwort vergessen genauso', async t => {

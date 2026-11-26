@@ -397,8 +397,10 @@ test('Export: CSV mit denselben Filtern, JSON als Array; der Export selbst wird 
     const { cookie } = await app.login();
     app.services.events.record({ event: 'formel', message: '=cmd|calc', severity: SEVERITY.ERROR });
 
-    const csv = await (await fetch(app.url('/admin/logs/export.csv?sev=error'), { headers: { cookie } })).text();
-    const lines = csv.trim().split('\r\n');
+    const csv = await fetch(app.url('/admin/logs/export.csv?sev=error'), { headers: { cookie } });
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get('content-disposition'), /^attachment; filename=("?)iso-share-events-\d{8}-\d{4}\.csv\1$/);
+    const lines = (await csv.text()).trim().split('\r\n');
     assert.match(lines[0], /^id;time_utc;time_local;severity;module;event/);
     assert.equal(lines.length, 2);
     // UTC eindeutig fuer Tools, daneben dieselbe Zeit in Europe/Berlin mit Versatz
@@ -406,7 +408,8 @@ test('Export: CSV mit denselben Filtern, JSON als Array; der Export selbst wird 
     assert.ok(lines[1].includes("'=cmd|calc"));
 
     const res = await fetch(app.url('/admin/logs/export.json?q=formel'), { headers: { cookie } });
-    assert.match(res.headers.get('content-disposition'), /attachment; filename="iso-share-events-.*\.json"/);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-disposition'), /^attachment; filename=("?)iso-share-events-\d{8}-\d{4}\.json\1$/);
     const data = await res.json();
     assert.equal(data.length, 1);
     assert.equal(data[0].event, 'formel');
